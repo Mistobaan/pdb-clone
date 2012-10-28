@@ -1,8 +1,9 @@
 # A test suite for pdb; not very comprehensive at the moment.
 
 import imp
-import pdb
+from pdb_clone import pdb
 import sys
+import os
 import unittest
 import subprocess
 import textwrap
@@ -10,6 +11,9 @@ import textwrap
 from test import support
 # This little helper class is essential for testing pdb under doctest.
 from test.test_doctest import _FakeInput
+
+# Some unittest tests spawn a new instance of pdb.
+os.environ['PYTHONPATH'] = os.path.abspath('pdb_clone')
 
 
 class PdbTestInput(object):
@@ -33,7 +37,7 @@ def test_pdb_displayhook():
     """This tests the custom displayhook for pdb.
 
     >>> def test_function(foo, bar):
-    ...     import pdb; pdb.Pdb(nosigint=True).set_trace()
+    ...     from pdb_clone import pdb; pdb.Pdb(nosigint=True).set_trace()
     ...     pass
 
     >>> with PdbTestInput([
@@ -73,7 +77,7 @@ def test_pdb_basic_commands():
     ...     return foo.upper()
 
     >>> def test_function():
-    ...     import pdb; pdb.Pdb(nosigint=True).set_trace()
+    ...     from pdb_clone import pdb; pdb.Pdb(nosigint=True).set_trace()
     ...     ret = test_function_2('baz')
     ...     print(ret)
 
@@ -172,7 +176,7 @@ def test_pdb_breakpoint_commands():
     """Test basic commands related to breakpoints.
 
     >>> def test_function():
-    ...     import pdb; pdb.Pdb(nosigint=True).set_trace()
+    ...     from pdb_clone import pdb; pdb.Pdb(nosigint=True).set_trace()
     ...     print(1)
     ...     print(2)
     ...     print(3)
@@ -181,7 +185,7 @@ def test_pdb_breakpoint_commands():
     First, need to clear bdb state that might be left over from previous tests.
     Otherwise, the new breakpoints might get assigned different numbers.
 
-    >>> from bdb import Breakpoint
+    >>> from pdb_clone.bdb import Breakpoint
     >>> Breakpoint.next = 1
     >>> Breakpoint.bplist = {}
     >>> Breakpoint.bpbynumber = [None]
@@ -285,8 +289,8 @@ def test_list_commands():
     """Test the list and source commands of pdb.
 
     >>> def test_function_2(foo):
-    ...     import test.test_pdb
-    ...     test.test_pdb.do_nothing()
+    ...     import testsuite.test_pdb
+    ...     testsuite.test_pdb.do_nothing()
     ...     'some...'
     ...     'more...'
     ...     'code...'
@@ -301,7 +305,7 @@ def test_list_commands():
     ...     return foo
 
     >>> def test_function():
-    ...     import pdb; pdb.Pdb(nosigint=True).set_trace()
+    ...     from pdb_clone import pdb; pdb.Pdb(nosigint=True).set_trace()
     ...     ret = test_function_2('baz')
 
     >>> with PdbTestInput([  # doctest: +ELLIPSIS, +NORMALIZE_WHITESPACE
@@ -324,7 +328,7 @@ def test_list_commands():
     -> ret = test_function_2('baz')
     (Pdb) list
       1         def test_function():
-      2             import pdb; pdb.Pdb(nosigint=True).set_trace()
+      2             from pdb_clone import pdb; pdb.Pdb(nosigint=True).set_trace()
       3  ->         ret = test_function_2('baz')
     [EOF]
     (Pdb) step
@@ -333,8 +337,8 @@ def test_list_commands():
     -> def test_function_2(foo):
     (Pdb) list
       1  ->     def test_function_2(foo):
-      2             import test.test_pdb
-      3             test.test_pdb.do_nothing()
+      2             import testsuite.test_pdb
+      3             testsuite.test_pdb.do_nothing()
       4             'some...'
       5             'more...'
       6             'code...'
@@ -351,16 +355,16 @@ def test_list_commands():
     [EOF]
     (Pdb) list 1,3
       1  ->     def test_function_2(foo):
-      2             import test.test_pdb
-      3             test.test_pdb.do_nothing()
+      2             import testsuite.test_pdb
+      3             testsuite.test_pdb.do_nothing()
     (Pdb) list x
     *** ...
     (Pdb) next
     > <doctest test.test_pdb.test_list_commands[0]>(2)test_function_2()
-    -> import test.test_pdb
+    -> import testsuite.test_pdb
     (Pdb) next
     > <doctest test.test_pdb.test_list_commands[0]>(3)test_function_2()
-    -> test.test_pdb.do_nothing()
+    -> testsuite.test_pdb.do_nothing()
     (Pdb) step
     --Call--
     > ...test_pdb.py(...)do_nothing()
@@ -387,7 +391,7 @@ def test_post_mortem():
     ...         print('Exception!')
 
     >>> def test_function():
-    ...     import pdb; pdb.Pdb(nosigint=True).set_trace()
+    ...     from pdb_clone import pdb; pdb.Pdb(nosigint=True).set_trace()
     ...     test_function_2()
     ...     print('Not reached.')
 
@@ -420,7 +424,7 @@ def test_post_mortem():
     -> 1/0
     (Pdb) list
       1         def test_function():
-      2             import pdb; pdb.Pdb(nosigint=True).set_trace()
+      2             from pdb_clone import pdb; pdb.Pdb(nosigint=True).set_trace()
       3  ->         test_function_2()
       4             print('Not reached.')
     [EOF]
@@ -444,7 +448,8 @@ def test_pdb_skip_modules():
 
     >>> def skip_module():
     ...     import string
-    ...     import pdb; pdb.Pdb(skip=['stri*'], nosigint=True).set_trace()
+    ...     from pdb_clone import pdb
+    ...     pdb.Pdb(skip=['stri*'], nosigint=True).set_trace()
     ...     string.capwords('FOO')
 
     >>> with PdbTestInput([
@@ -452,11 +457,11 @@ def test_pdb_skip_modules():
     ...     'continue',
     ... ]):
     ...     skip_module()
-    > <doctest test.test_pdb.test_pdb_skip_modules[0]>(4)skip_module()
+    > <doctest test.test_pdb.test_pdb_skip_modules[0]>(5)skip_module()
     -> string.capwords('FOO')
     (Pdb) step
     --Return--
-    > <doctest test.test_pdb.test_pdb_skip_modules[0]>(4)skip_module()->None
+    > <doctest test.test_pdb.test_pdb_skip_modules[0]>(5)skip_module()->None
     -> string.capwords('FOO')
     (Pdb) continue
     """
@@ -473,7 +478,8 @@ def test_pdb_skip_modules_with_callback():
     >>> def skip_module():
     ...     def callback():
     ...         return None
-    ...     import pdb; pdb.Pdb(skip=['module_to_skip*'], nosigint=True).set_trace()
+    ...     from pdb_clone import pdb
+    ...     pdb.Pdb(skip=['module_to_skip*'], nosigint=True).set_trace()
     ...     mod.foo_pony(callback)
 
     >>> with PdbTestInput([
@@ -486,7 +492,7 @@ def test_pdb_skip_modules_with_callback():
     ... ]):
     ...     skip_module()
     ...     pass  # provides something to "step" to
-    > <doctest test.test_pdb.test_pdb_skip_modules_with_callback[0]>(5)skip_module()
+    > <doctest test.test_pdb.test_pdb_skip_modules_with_callback[0]>(6)skip_module()
     -> mod.foo_pony(callback)
     (Pdb) step
     --Call--
@@ -501,7 +507,7 @@ def test_pdb_skip_modules_with_callback():
     -> return None
     (Pdb) step
     --Return--
-    > <doctest test.test_pdb.test_pdb_skip_modules_with_callback[0]>(5)skip_module()->None
+    > <doctest test.test_pdb.test_pdb_skip_modules_with_callback[0]>(6)skip_module()->None
     -> mod.foo_pony(callback)
     (Pdb) step
     > <doctest test.test_pdb.test_pdb_skip_modules_with_callback[1]>(10)<module>()
@@ -514,7 +520,7 @@ def test_pdb_continue_in_bottomframe():
     """Test that "continue" and "next" work properly in bottom frame (issue #5294).
 
     >>> def test_function():
-    ...     import pdb, sys; inst = pdb.Pdb(nosigint=True)
+    ...     import sys; from pdb_clone import pdb; inst = pdb.Pdb(nosigint=True)
     ...     inst.set_trace()
     ...     inst.botframe = sys._getframe()  # hackery to get the right botframe
     ...     print(1)
@@ -554,7 +560,7 @@ def test_pdb_continue_in_bottomframe():
 
 def pdb_invoke(method, arg):
     """Run pdb.method(arg)."""
-    import pdb
+    from pdb_clone import pdb
     getattr(pdb.Pdb(nosigint=True), method)(arg)
 
 
