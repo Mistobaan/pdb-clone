@@ -12,6 +12,9 @@ from test import test_support
 # This little helper class is essential for testing pdb under doctest.
 from test.test_doctest import _FakeInput
 
+# Some unittest tests spawn a new instance of pdb.
+os.environ['PYTHONPATH'] = os.path.abspath('pdb_clone')
+
 
 class PdbTestCase(unittest.TestCase):
 
@@ -90,7 +93,7 @@ def test_pdb_displayhook():
     """This tests the custom displayhook for pdb.
 
     >>> def test_function(foo, bar):
-    ...     import pdb; pdb.Pdb().set_trace()
+    ...     from pdb_clone import pdb; pdb.Pdb().set_trace()
     ...     pass
 
     >>> with PdbTestInput([
@@ -118,7 +121,7 @@ def test_pdb_breakpoint_commands():
     """Test basic commands related to breakpoints.
 
     >>> def test_function():
-    ...     import pdb; pdb.Pdb().set_trace()
+    ...     from pdb_clone import pdb; pdb.Pdb().set_trace()
     ...     print(1)
     ...     print(2)
     ...     print(3)
@@ -127,7 +130,7 @@ def test_pdb_breakpoint_commands():
     First, need to clear bdb state that might be left over from previous tests.
     Otherwise, the new breakpoints might get assigned different numbers.
 
-    >>> from bdb import Breakpoint
+    >>> from pdb_clone.bdb import Breakpoint
     >>> Breakpoint.next = 1
     >>> Breakpoint.bplist = {}
     >>> Breakpoint.bpbynumber = [None]
@@ -222,7 +225,7 @@ def test_pdb_skip_modules():
 
     >>> def skip_module():
     ...     import string
-    ...     import pdb; pdb.Pdb(skip=['string*']).set_trace()
+    ...     from pdb_clone import pdb; pdb.Pdb(skip=['string*']).set_trace()
     ...     string.lower('FOO')
 
     >>> with PdbTestInput([
@@ -251,7 +254,8 @@ def test_pdb_skip_modules_with_callback():
     >>> def skip_module():
     ...     def callback():
     ...         return None
-    ...     import pdb; pdb.Pdb(skip=['module_to_skip*']).set_trace()
+    ...     from pdb_clone import pdb
+    ...     pdb.Pdb(skip=['module_to_skip*']).set_trace()
     ...     mod.foo_pony(callback)
 
     >>> with PdbTestInput([
@@ -264,7 +268,7 @@ def test_pdb_skip_modules_with_callback():
     ... ]):
     ...     skip_module()
     ...     pass  # provides something to "step" to
-    > <doctest test.test_pdb.test_pdb_skip_modules_with_callback[0]>(5)skip_module()
+    > <doctest test.test_pdb.test_pdb_skip_modules_with_callback[0]>(6)skip_module()
     -> mod.foo_pony(callback)
     (Pdb) step
     --Call--
@@ -279,7 +283,7 @@ def test_pdb_skip_modules_with_callback():
     -> return None
     (Pdb) step
     --Return--
-    > <doctest test.test_pdb.test_pdb_skip_modules_with_callback[0]>(5)skip_module()->None
+    > <doctest test.test_pdb.test_pdb_skip_modules_with_callback[0]>(6)skip_module()->None
     -> mod.foo_pony(callback)
     (Pdb) step
     > <doctest test.test_pdb.test_pdb_skip_modules_with_callback[1]>(10)<module>()
@@ -292,7 +296,7 @@ def test_pdb_continue_in_bottomframe():
     """Test that "continue" and "next" work properly in bottom frame (issue #5294).
 
     >>> def test_function():
-    ...     import pdb, sys; inst = pdb.Pdb()
+    ...     import sys; from pdb_clone import pdb; inst = pdb.Pdb()
     ...     inst.set_trace()
     ...     inst.botframe = sys._getframe()  # hackery to get the right botframe
     ...     print(1)
@@ -303,7 +307,7 @@ def test_pdb_continue_in_bottomframe():
     First, need to clear bdb state that might be left over from previous tests.
     Otherwise, the new breakpoints might get assigned different numbers.
 
-    >>> from bdb import Breakpoint
+    >>> from pdb_clone.bdb import Breakpoint
     >>> Breakpoint.next = 1
     >>> Breakpoint.bplist = {}
     >>> Breakpoint.bpbynumber = [None]
