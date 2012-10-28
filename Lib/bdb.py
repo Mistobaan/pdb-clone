@@ -640,6 +640,6 @@ def bar(a):
 
 def test():
     t = Tdb()
-    t.run('import bdb; bdb.foo(10)')
+    t.run('from pdb_clone import bdb; bdb.foo(10)')
 
 # end

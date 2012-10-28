@@ -8,6 +8,7 @@ if sys.version_info < (2, 7):
 import os
 import doctest
 import importlib
+import shutil
 import test.test_support as support
 import distutils.core
 from distutils.command.install import install as _install
@@ -43,9 +44,6 @@ class sdist(_sdist):
                 preserve_mode=preserve_mode, preserve_times=preserve_times,
                 link=None, level=level)
 
-class TestFailed(Exception):
-    """Test failed."""
-
 class Test(distutils.core.Command):
     description = 'run the test suite'
 
@@ -77,30 +75,43 @@ class Test(distutils.core.Command):
 
     def run (self):
         """Run the test suite."""
-        result_tmplt = '{} ({}) ... {:d} tests with zero failures'
+        result_tmplt = '{} ... {:d} tests with zero failures'
         optionflags = doctest.REPORT_ONLY_FIRST_FAILURE if self.stop else 0
-        sys.path.insert(0, os.path.abspath('pdb_clone'))
-        # Some tests spawn a new instance of pdb with the command
-        # 'python -m pdb'.
-        os.environ['PYTHONPATH'] = os.path.abspath('pdb_clone')
-
-        ok = 0
+        cnt = ok = 0
         for test in self.tests:
-            abstest = self.testdir + '.' + test
-            module = importlib.import_module(abstest)
-            suite = defaultTestLoader.loadTestsFromModule(module)
-            # Change the module name to allow correct doctest checks.
-            module.__name__ = 'test.' + test
-            print abstest
-            f, t = doctest.testmod(module, verbose=self.detail,
-                                                    optionflags=optionflags)
-            if f:
-                raise TestFailed('{:d} of {:d} doctests failed'.format(f, t))
-            print result_tmplt.format('doctest', test, t)
-            support.run_unittest(suite)
-            print result_tmplt.format('unittest', test, suite.countTestCases())
-            ok += 1
-        print ok, 'test(s) OK.'
+            cnt += 1
+            with support.temp_cwd() as cwd:
+                sys.path.insert(0, os.getcwd())
+                # Some unittest tests spawn a new instance of pdb.
+                shutil.copytree(os.path.join(support.SAVEDCWD, 'pdb_clone'),
+                                                os.path.join(cwd, 'pdb_clone'))
+                abstest = self.testdir + '.' + test
+                module = importlib.import_module(abstest)
+                suite = defaultTestLoader.loadTestsFromModule(module)
+                # Change the module name to allow correct doctest checks.
+                module.__name__ = 'test.' + test
+                print '{}:'.format(abstest)
+                f, t = doctest.testmod(module, verbose=self.detail,
+                                                        optionflags=optionflags)
+                if f:
+                    print '{:d} of {:d} doctests failed'.format(f, t)
+                elif t:
+                    print result_tmplt.format('doctest', t)
+
+                try:
+                    support.run_unittest(suite)
+                except support.TestFailed as msg:
+                    print 'test', test, 'failed --', msg
+                else:
+                    print result_tmplt.format('unittest',
+                                                    suite.countTestCases())
+                    if not f:
+                        ok += 1
+        failed = cnt - ok
+        cnt = failed if failed else ok
+        plural = 's' if cnt > 1 else ''
+        result = 'failed' if failed else 'ok'
+        print '{:d} test{} {}.'.format(cnt, plural, result)
 
 distutils.core.setup(
     cmdclass={'sdist': sdist,

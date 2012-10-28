@@ -7,7 +7,7 @@
 import sys
 import linecache
 import cmd
-import bdb
+from pdb_clone import bdb
 from repr import Repr
 import os
 import re
@@ -1334,5 +1334,5 @@ def main():
 
 # When invoked as main program, invoke the debugger on a script
 if __name__ == '__main__':
-    import pdb
+    from pdb_clone import pdb
     pdb.main()
