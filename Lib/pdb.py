@@ -70,7 +70,7 @@ import os
 import re
 import sys
 import cmd
-import bdb
+from pdb_clone import bdb
 import dis
 import code
 import glob
@@ -1671,5 +1671,5 @@ def main():
 
 # When invoked as main program, invoke the debugger on a script
 if __name__ == '__main__':
-    import pdb
+    from pdb_clone import pdb
     pdb.main()
