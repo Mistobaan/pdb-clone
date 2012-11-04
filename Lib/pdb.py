@@ -77,6 +77,8 @@ import glob
 import pprint
 import signal
 import inspect
+import importlib
+import imp
 import traceback
 import linecache
 
@@ -124,6 +126,85 @@ def lasti2lineno(code, lasti):
         if lasti >= i:
             return lineno
     return 0
+
+def get_module_fname(module_name, path=None, inpackage=None):
+    if module_name in sys.modules:
+        return getattr(sys.modules[module_name], '__file__', None)
+
+    if inpackage is not None:
+        fullmodule = '{}.{}'.format(inpackage, module_name)
+    else:
+        fullmodule = module_name
+
+    i = module_name.rfind('.')
+    if i >= 0:
+        package = module_name[:i]
+        submodule = module_name[i+1:]
+        parent = get_module_fname(package, path, inpackage)
+        if not parent:
+            return None
+        if inpackage is not None:
+            package = '{}.{}'.format(inpackage, package)
+        return get_module_fname(submodule, [os.path.dirname(parent)], package)
+
+    if inpackage is not None:
+        search_path = path
+    else:
+        search_path = sys.path
+    if hasattr(importlib, 'find_loader'):
+        try:
+            loader = importlib.find_loader(fullmodule, search_path)
+            if not loader:
+                return None
+        except (ImportError, ValueError):
+            return None
+        try:
+            return loader.get_filename(fullmodule)
+        except AttributeError:
+            return None
+    else:
+        try:
+            f, fname, (s, m, t) = imp.find_module(module_name, search_path)
+            if f: f.close()
+            if t == imp.PKG_DIRECTORY:
+                f, fname, desc = imp.find_module('__init__', [fname])
+                if f: f.close()
+            return fname
+        except ImportError:
+            return None
+
+def source_filename(filename):
+    if filename:
+        filename = os.path.abspath(filename)
+        if filename[-4:].lower() in ('.pyc', '.pyo'):
+            filename = filename[:-1]
+        if os.path.exists(filename):
+            return filename
+    return None
+
+def get_fqn_fname(fqn, frame):
+    try:
+        func = eval(fqn, frame.f_globals)
+    except:
+        # fqn is defined in a module not yet (fully) imported.
+        module = inspect.getmodule(frame)
+        candidate_tuples = []
+        frame_fname = source_filename(get_module_fname(module.__name__))
+        # Try first the current module for a function or method.
+        if frame_fname:
+            candidate_tuples.append((fqn, frame_fname))
+        names = fqn.split('.')
+        for i in range(len(names) - 1, 0, -1):
+            filename = source_filename(get_module_fname('.'.join(names[:i])))
+            if filename:
+                candidate_tuples.append(('.'.join(names[i:]), filename))
+        return candidate_tuples
+    else:
+        try:
+            filename = inspect.getfile(func)
+        except TypeError:
+            return []
+        return [(fqn, filename)]
 
 
 class _rstr(str):
@@ -255,35 +336,47 @@ class Pdb(bdb.Bdb, cmd.Cmd):
             self.message('--Call--')
             self.interaction(frame, None)
 
-    def user_line(self, frame):
+    def user_line(self, frame, breakpoint_hits=None):
         """This function is called when we stop or break at this line."""
         if self._wait_for_mainpyfile:
-            if (self.mainpyfile != self.canonic(frame.f_code.co_filename)
+            if (self.mainpyfile != bdb.canonic(frame.f_code.co_filename)
                 or frame.f_lineno <= 0):
                 return
             self._wait_for_mainpyfile = False
-        if self.bp_commands(frame):
+        if not breakpoint_hits or self.bp_commands(frame, breakpoint_hits):
             self.interaction(frame, None)
 
-    def bp_commands(self, frame):
-        """Call every command that was set for the current active breakpoint
-        (if there is one).
+    def bp_commands(self, frame, breakpoint_hits):
+        """Call every command that was set for the current active breakpoints.
 
         Returns True if the normal interaction function must be called,
         False otherwise."""
-        # self.currentbp is set in bdb in Bdb.break_here if a breakpoint was hit
-        if getattr(self, "currentbp", False) and \
-               self.currentbp in self.commands:
-            currentbp = self.currentbp
-            self.currentbp = 0
-            lastcmd_back = self.lastcmd
-            self.setup(frame, None)
-            for line in self.commands[currentbp]:
-                self.onecmd(line)
-            self.lastcmd = lastcmd_back
-            if not self.commands_silent[currentbp]:
+        # Handle multiple breakpoints on the same line (issue 14789)
+        effective_bp_list, temporaries = breakpoint_hits
+        silent = True
+        doprompt = False
+        atleast_one_cmd = False
+        for bp in effective_bp_list:
+            if bp in self.commands:
+                atleast_one_cmd = True
+                lastcmd_back = self.lastcmd
+                self.setup(frame, None)
+                for line in self.commands[bp]:
+                    self.onecmd(line)
+                self.lastcmd = lastcmd_back
+                if not self.commands_silent[bp]:
+                    silent = False
+                if self.commands_doprompt[bp]:
+                    doprompt = True
+        # Delete the temporary breakpoints.
+        tmp_to_delete = ' '.join(str(bp) for bp in temporaries)
+        if tmp_to_delete:
+            self.do_clear(tmp_to_delete)
+
+        if atleast_one_cmd:
+            if not silent:
                 self.print_stack_entry(self.stack[self.curindex])
-            if self.commands_doprompt[currentbp]:
+            if doprompt:
                 self._cmdloop()
             self.forget()
             return
@@ -602,81 +695,67 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         sys.path; the .py suffix may be omitted.
         """
         if not arg:
-            if self.breaks:  # There's at least one
+            all_breaks = '\n'.join(bp.bpformat() for bp in
+                                bdb.Breakpoint.bpbynumber if bp)
+            if all_breaks:
                 self.message("Num Type         Disp Enb   Where")
-                for bp in bdb.Breakpoint.bpbynumber:
-                    if bp:
-                        self.message(bp.bpformat())
+                self.message(all_breaks)
             return
-        # parse arguments; comma has lowest precedence
-        # and cannot occur in filename
-        filename = None
-        lineno = None
-        cond = None
-        comma = arg.find(',')
-        if comma > 0:
-            # parse stuff after comma: "condition"
-            cond = arg[comma+1:].lstrip()
-            arg = arg[:comma].rstrip()
-        # parse stuff before comma: [filename:]lineno | function
-        colon = arg.rfind(':')
-        funcname = None
-        if colon >= 0:
-            filename = arg[:colon].rstrip()
-            f = self.lookupmodule(filename)
-            if not f:
-                self.error('%r not found from sys.path' % filename)
-                return
+
+        # Parse arguments, comma has lowest precedence and cannot occur in
+        # filename.
+        args = arg.rsplit(',', 1)
+        cond =  args[1].strip() if len(args) == 2 else None
+        # Parse stuff before comma: [filename:]lineno | function.
+        args = args[0].rsplit(':', 1)
+        name = args[0].strip()
+        lineno =  args[1] if len(args) == 2 else args[0]
+        try:
+            lineno = int(lineno)
+        except ValueError:
+            if len(args) == 2:
+                self.error('Bad lineno: "{}".'.format(lineno))
             else:
-                filename = f
-            arg = arg[colon+1:].lstrip()
-            try:
-                lineno = int(arg)
-            except ValueError:
-                self.error('Bad lineno: %s' % arg)
-                return
-        else:
-            # no colon; can be lineno or function
-            try:
-                lineno = int(arg)
-            except ValueError:
-                try:
-                    func = eval(arg,
-                                self.curframe.f_globals,
-                                self.curframe_locals)
-                except:
-                    func = arg
-                try:
-                    if hasattr(func, '__func__'):
-                        func = func.__func__
-                    code = func.__code__
-                    #use co_name to identify the bkpt (function names
-                    #could be aliased, but co_name is invariant)
-                    funcname = code.co_name
-                    lineno = code.co_firstlineno
-                    filename = code.co_filename
-                except:
-                    # last thing to try
-                    (ok, filename, ln) = self.lineinfo(arg)
-                    if not ok:
-                        self.error('The specified object %r is not a function '
-                                   'or was not found along sys.path.' % arg)
+                # Attempt the list of possible function or method fully
+                # qualified names and corresponding filenames.
+                candidates = get_fqn_fname(name, self.curframe)
+                for fqn, fname in candidates:
+                    try:
+                        bp = self.set_break(fname, None, temporary, cond, fqn)
+                        self.message('Breakpoint {:d} at {}:{:d}'.format(
+                                                bp.number, bp.file, bp.line))
                         return
-                    funcname = ok # ok contains a function name
-                    lineno = int(ln)
-        if not filename:
-            filename = self.defaultFile()
-        # Check for reasonable breakpoint
-        line = self.checkline(filename, lineno)
-        if line:
-            # now set the break point
-            err = self.set_break(filename, line, temporary, cond, funcname)
-            if err:
-                self.error(err, file=self.stdout)
+                    except bdb.BdbError:
+                        pass
+                if not candidates:
+                    self.error(
+                        'Not a function or a built-in: "{}"'.format(name))
+                else:
+                    self.error('Bad name: "{}".'.format(name))
+        else:
+            filename = self.curframe.f_code.co_filename
+            if len(args) == 2 and name:
+                filename = name
+            if filename.startswith('<') and filename.endswith('>'):
+                # allow <doctest name>: doctest installs a hook at
+                # linecache.getlines to allow <doctest name> to be
+                # linecached and readable.
+                if filename == '<string>' and self.mainpyfile:
+                    filename = self.mainpyfile
             else:
-                bp = self.get_breaks(filename, line)[-1]
-                self.message("Breakpoint %d at %s:%d" %
-                             (bp.number, bp.file, bp.line))
+                root, ext = os.path.splitext(filename)
+                if ext == '':
+                    filename = filename + '.py'
+                if not os.path.exists(filename):
+                    self.error('Bad filename: "{}".'.format(arg))
+                    return
+            try:
+                bp = self.set_break(filename, lineno, temporary, cond)
+            except bdb.BdbError as err:
+                self.error(err)
+            else:
+                self.message('Breakpoint {:d} at {}:{:d}'.format(
+                                        bp.number, bp.file, bp.line))
 
     # To be overridden in derived debuggers
     def defaultFile(self):
@@ -699,60 +778,6 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         self.do_break(arg, 1)
 
     complete_tbreak = _complete_location
-
-    def lineinfo(self, identifier):
-        failed = (None, None, None)
-        # Input is identifier, may be in single quotes
-        idstring = identifier.split("'")
-        if len(idstring) == 1:
-            # not in single quotes
-            id = idstring[0].strip()
-        elif len(idstring) == 3:
-            # quoted
-            id = idstring[1].strip()
-        else:
-            return failed
-        if id == '': return failed
-        parts = id.split('.')
-        # Protection for derived debuggers
-        if parts[0] == 'self':
-            del parts[0]
-            if len(parts) == 0:
-                return failed
-        # Best first guess at file to look at
-        fname = self.defaultFile()
-        if len(parts) == 1:
-            item = parts[0]
-        else:
-            # More than one part.
-            # First is module, second is method/class
-            f = self.lookupmodule(parts[0])
-            if f:
-                fname = f
-            item = parts[1]
-        answer = find_function(item, fname)
-        return answer or failed
-
-    def checkline(self, filename, lineno):
-        """Check whether specified line seems to be executable.
-
-        Return `lineno` if it is, 0 if not (e.g. a docstring, comment, blank
-        line or EOF). Warning: testing is not comprehensive.
-        """
-        # this method should be callable before starting debugging, so default
-        # to "no globals" if there is no current frame
-        globs = self.curframe.f_globals if hasattr(self, 'curframe') else None
-        line = linecache.getline(filename, lineno, globs)
-        if not line:
-            self.message('End of file')
-            return 0
-        line = line.strip()
-        # Don't allow setting breakpoint at a blank line
-        if (not line or (line[0] == '#') or
-             (line[:3] == '"""') or line[:3] == "'''"):
-            self.error('Blank or comment')
-            return 0
-        return lineno
 
     def do_enable(self, arg):
         """enable bpnumber [bpnumber ...]
@@ -1213,7 +1238,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
             first = self.lineno + 1
         if last is None:
             last = first + 10
-        filename = self.curframe.f_code.co_filename
+        filename = bdb.canonic(self.curframe.f_code.co_filename)
         breaklist = self.get_file_breaks(filename)
         try:
             lines = linecache.getlines(filename, self.curframe.f_globals)
@@ -1481,30 +1506,6 @@ class Pdb(bdb.Bdb, cmd.Cmd):
 
     # other helper functions
 
-    def lookupmodule(self, filename):
-        """Helper function for break/clear parsing -- may be overridden.
-
-        lookupmodule() translates (possibly incomplete) file or module name
-        into an absolute file name.
-        """
-        if os.path.isabs(filename) and  os.path.exists(filename):
-            return filename
-        f = os.path.join(sys.path[0], filename)
-        if  os.path.exists(f) and self.canonic(f) == self.mainpyfile:
-            return f
-        root, ext = os.path.splitext(filename)
-        if ext == '':
-            filename = filename + '.py'
-        if os.path.isabs(filename):
-            return filename
-        for dirname in sys.path:
-            while os.path.islink(dirname):
-                dirname = os.readlink(dirname)
-            fullname = os.path.join(dirname, filename)
-            if os.path.exists(fullname):
-                return fullname
-        return None
-
     def _runscript(self, filename):
         # The script has to run in __main__ namespace (or imports from
         # __main__ will break).
@@ -1524,7 +1525,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         # avoid stopping before we reach the main script (see user_line and
         # user_call for details).
         self._wait_for_mainpyfile = True
-        self.mainpyfile = self.canonic(filename)
+        self.mainpyfile = bdb.canonic(filename)
         self._user_requested_quit = False
         with open(filename, "rb") as fp:
             statement = "exec(compile(%r, %r, 'exec'))" % \
