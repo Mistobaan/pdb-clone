@@ -7,6 +7,7 @@ import os
 import unittest
 import subprocess
 import textwrap
+import importlib
 
 from test import support
 # This little helper class is essential for testing pdb under doctest.
@@ -603,11 +604,36 @@ def test_pdb_run_with_code_object():
     """
 
 
+def normalize(result, filename='', strip_bp_lnum=False):
+    """Normalize a test result."""
+    lines = []
+    for line in result.splitlines():
+        while line.startswith('(Pdb) ') or line.startswith('(com) '):
+            line = line[6:]
+        words = line.split()
+        line = []
+        # Replace tabs with spaces
+        for word in words:
+            if filename:
+                idx = word.find(filename)
+                # Remove the filename prefix
+                if idx > 0:
+                    word = word[idx:]
+                if idx >=0 and strip_bp_lnum:
+                    idx = word.find(':')
+                    # Remove the ':' separator and breakpoint line number
+                    if idx > 0:
+                        word = word[:idx]
+            line.append(word)
+        line = ' '.join(line)
+        lines.append(line.strip())
+    return '\n'.join(lines)
+
+
 class PdbTestCase(unittest.TestCase):
 
-    def run_pdb(self, script, commands):
+    def run_pdb(self, script, commands, filename):
         """Run 'script' lines with pdb and the pdb 'commands'."""
-        filename = 'main.py'
         with open(filename, 'w') as f:
             f.write(textwrap.dedent(script))
         self.addCleanup(support.unlink, filename)
@@ -615,7 +641,7 @@ class PdbTestCase(unittest.TestCase):
         stdout = stderr = None
         with subprocess.Popen(cmd, stdout=subprocess.PIPE,
                                    stdin=subprocess.PIPE,
-                                   stderr=subprocess.STDOUT,
+                                   stderr=subprocess.PIPE,
                                    ) as proc:
             stdout, stderr = proc.communicate(str.encode(commands))
         stdout = stdout and bytes.decode(stdout)
@@ -667,11 +693,119 @@ class PdbTestCase(unittest.TestCase):
         """
         with open('bar.py', 'w') as f:
             f.write(textwrap.dedent(bar))
+        if hasattr(importlib, 'invalidate_caches'):
+            importlib.invalidate_caches()
         self.addCleanup(support.unlink, 'bar.py')
-        stdout, stderr = self.run_pdb(script, commands)
+        stdout, stderr = self.run_pdb(script, commands, 'main.py')
         self.assertTrue(
             any('main.py(5)foo()->None' in l for l in stdout.splitlines()),
             'Fail to step into the caller after a return')
+
+    def test_issue14789(self):
+        script = """
+            def bar(a):
+                x = 1
+
+            bar(10)
+            bar(20)
+        """
+        commands = """
+            break bar
+            commands 1
+            print a
+            end
+            ignore 1 1
+            break bar
+            commands 2
+            print a + 1
+            end
+            ignore 2 1
+            continue
+            break
+            quit
+        """
+        expected = """
+            > main.py(2)<module>()
+            -> def bar(a):
+            Breakpoint 1 at main.py:2
+            Will ignore next 1 crossing of breakpoint 1.
+            Breakpoint 2 at main.py:2
+            Will ignore next 1 crossing of breakpoint 2.
+            20
+            21
+            > main.py(3)bar()
+            -> x = 1
+            Num Type         Disp Enb   Where
+            1 breakpoint keep yes at main.py:2
+                    breakpoint already hit 2 times
+            2 breakpoint keep yes at main.py:2
+                    breakpoint already hit 2 times
+        """
+        filename = 'main.py'
+        stdout, stderr = self.run_pdb(script, commands, filename)
+        stdout = normalize(stdout, filename)
+        expected = normalize(expected)
+        self.assertTrue(stdout in expected,
+            '\n\nExpected:\n{}\nGot:\n{}\n'
+            'Fail to handle two breakpoints set on the same line.'.format(
+                expected, stdout))
+
+    def test_set_breakpoint_by_function_name(self):
+        script = """
+            class C:
+                c_foo = 1
+
+            class D:
+                def d_foo(self):
+                    pass
+
+            def foo():
+                pass
+
+            not_a_function = 1
+            foo()
+        """
+        commands = """
+            break C
+            break C.c_foo
+            break D.d_foo
+            break foo
+            break not_a_function
+            break len
+            break logging.handlers.SocketHandler.close
+            continue
+            break C
+            break C.c_foo
+            break D.d_foo
+            break foo
+            break not_a_function
+            quit
+        """
+        expected = """
+            > main.py(2)<module>()
+            -> class C:
+            *** Bad name: "C".
+            *** Bad name: "C.c_foo".
+            Breakpoint 1 at main.py:6
+            Breakpoint 2 at main.py:9
+            *** Bad name: "not_a_function".
+            *** Not a function or a built-in: "len"
+            Breakpoint 3 at handlers.py:<LINE_NUMBER>
+            > main.py(10)foo()
+            -> pass
+            *** Bad name: "C".
+            *** Not a function or a built-in: "C.c_foo"
+            Breakpoint 4 at main.py:6
+            Breakpoint 5 at main.py:9
+            *** Not a function or a built-in: "not_a_function"
+        """
+        filename = 'main.py'
+        stdout, stderr = self.run_pdb(script, commands, filename)
+        stdout = normalize(normalize(stdout, 'handlers.py', strip_bp_lnum=True), filename)
+        expected = normalize(expected, 'handlers.py', strip_bp_lnum=True)
+        self.assertTrue(stdout in expected,
+            '\n\nExpected:\n{}\nGot:\n{}\n'
+            'Fail to handle a breakpoint set by function name.'.format(expected, stdout))
 
     def tearDown(self):
         support.unlink(support.TESTFN)

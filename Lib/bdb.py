@@ -3,12 +3,251 @@
 import fnmatch
 import sys
 import os
+import linecache
+import token
+import tokenize
+import itertools
+import types
+from bisect import bisect
+from operator import attrgetter
 
 __all__ = ["BdbQuit", "Bdb", "Breakpoint"]
+
+# A dictionary mapping a filename to a BdbModule instance.
+_modules = {}
+_fncache = {}
+
+def canonic(filename):
+    if filename == "<" + filename[1:-1] + ">":
+        return filename
+    canonic = _fncache.get(filename)
+    if not canonic:
+        canonic = os.path.abspath(filename)
+        canonic = os.path.normcase(canonic)
+        _fncache[filename] = canonic
+    return canonic
+
+def code_line_numbers(code):
+    # Source code line numbers generator (see Objects/lnotab_notes.txt).
+    valid_lno = lno = code.co_firstlineno
+    yield valid_lno
+    # The iterator yields (line_incr[i], byte_incr[i+1]) from lnotab.
+    for line_incr, byte_incr in itertools.islice(zip(code.co_lnotab,
+                    itertools.chain(code.co_lnotab[1:], [1])), 1, None, 2):
+        lno += line_incr
+        if byte_incr == 0:
+            continue
+        if lno != valid_lno:
+            valid_lno = lno
+            yield valid_lno
+
+def reiterate(it):
+    """Iterator wrapper allowing to reiterate on items with send()."""
+    while True:
+        item = next(it)
+        val = (yield item)
+        # Reiterate while the sent value is true.
+        while val:
+            # The return value of send().
+            yield item
+            val = (yield item)
+
+class BdbError(Exception):
+    """Generic bdb exception."""
 
 class BdbQuit(Exception):
     """Exception to give up completely."""
 
+class BdbModule:
+    """A module.
+
+    Instance attributes:
+        functions_firstlno: a dictionary mapping function names and fully
+        qualified method names to their first line number.
+    """
+
+    def __init__(self, filename):
+        self.filename = filename
+        self.functions_firstlno = None
+        self.source_lines = linecache.getlines(filename)
+        if not self.source_lines:
+            raise BdbError('No lines in {}.'.format(filename))
+        try:
+            self.code = compile(''.join(self.source_lines), filename, 'exec')
+        except (SyntaxError, TypeError) as err:
+            raise BdbError('{}: {}.'.format(filename, err))
+
+    def get_func_lno(self, funcname):
+        """The first line number of the last defined 'funcname' function."""
+        if self.functions_firstlno is None:
+            self.functions_firstlno = {}
+            self.parse(reiterate(tokenize.generate_tokens(
+                                    iter(self.source_lines).__next__)))
+        try:
+            return self.functions_firstlno[funcname]
+        except KeyError:
+            raise BdbError('{}: function "{}" not found.'.format(
+                self.filename, funcname))
+
+    def get_actual_bp(self, lineno):
+        """Get the actual breakpoint line number.
+
+        When an exact match cannot be found in the lnotab expansion of the
+        module code object or one of its subcodes, pick up the next valid
+        statement line number.
+
+        Return the statement line defined by the tuple (code firstlineno,
+        statement line number) which is at the shortest distance to line
+        'lineno' and greater or equal to 'lineno'. When 'lineno' is the first
+        line number of a subcode, use its first statement line instead.
+        """
+
+        def _distance(code, module_level=False):
+            """The shortest distance to the next valid statement."""
+            subcodes = dict((c.co_firstlineno, c) for c in code.co_consts
+                                if isinstance(c, types.CodeType) and not
+                                    c.co_name.startswith('<'))
+            # Get the shortest distance to the subcode whose first line number
+            # is the last to be less or equal to lineno. That is, find the
+            # index of the first subcode whose first_lno is the first to be
+            # strictly greater than lineno.
+            subcode_dist = None
+            subcodes_flnos = sorted(subcodes)
+            idx = bisect(subcodes_flnos, lineno)
+            if idx != 0:
+                flno = subcodes_flnos[idx-1]
+                subcode_dist = _distance(subcodes[flno])
+
+            # Check if lineno is a valid statement line number in the current
+            # code, excluding function or method definition lines.
+            code_lnos = sorted(code_line_numbers(code))
+            # Do not stop at execution of function definitions.
+            if not module_level and len(code_lnos) > 1:
+                code_lnos = code_lnos[1:]
+            if lineno in code_lnos and lineno not in subcodes_flnos:
+                return 0, (code.co_firstlineno, lineno)
+
+            # Compute the distance to the next valid statement in this code.
+            idx = bisect(code_lnos, lineno)
+            if idx == len(code_lnos):
+                # lineno is greater that all 'code' line numbers.
+                return subcode_dist
+            actual_lno = code_lnos[idx]
+            dist = actual_lno - lineno
+            if subcode_dist and subcode_dist[0] < dist:
+                return subcode_dist
+            if actual_lno not in subcodes_flnos:
+                return dist, (code.co_firstlineno, actual_lno)
+            else:
+                # The actual line number is the line number of the first
+                # statement of the subcode following lineno (recursively).
+                return _distance(subcodes[actual_lno])
+
+        code_dist = _distance(self.code, module_level=True)
+        if not code_dist:
+            raise BdbError('{}: line {} is after the last '
+                'valid statement.'.format(self.filename, lineno))
+        return code_dist[1]
+
+    def parse(self, tok_generator, cindent=0, clss=None):
+        func_lno = 0
+        indent = 0
+        try:
+            for tokentype, tok, srowcol, _end, _line in tok_generator:
+                if tokentype == token.DEDENT:
+                    # End of function definition.
+                    if func_lno and srowcol[1] <= indent:
+                        func_lno = 0
+                    # End of class definition.
+                    if clss and srowcol[1] <= cindent:
+                        return
+                elif tok == 'def' or tok == 'class':
+                    if func_lno and srowcol[1] <= indent:
+                        func_lno = 0
+                    if clss and srowcol[1] <= cindent:
+                        tok_generator.send(1)
+                        return
+                    tokentype, name = next(tok_generator)[0:2]
+                    if tokentype != token.NAME:
+                        continue  # syntax error
+                    # Nested def or class in a function.
+                    if func_lno:
+                            continue
+                    if clss:
+                        name = '{}.{}'.format(clss, name)
+                    if tok == 'def':
+                        lineno, indent = srowcol
+                        func_lno = lineno
+                        self.functions_firstlno[name] = lineno
+                    else:
+                        self.parse(tok_generator, srowcol[1], name)
+        except StopIteration:
+            pass
+
+class ModuleBreakpoints:
+    """The breakpoints of a module.
+
+    The 'breakpts' attribute is a dictionary that maps a code firstlineno to a
+    'line_bps' dictionary that maps each line number of the code, where one or
+    more breakpoints are set, to the list of corresponding Breakpoint
+    instances.
+
+    Note:
+    A line in 'line_bps' is the actual line of the breakpoint (the line where the
+    debugger stops), this line may differ from the line attribute of the
+    Breakpoint instance as set by the user.
+    """
+
+    def __init__(self, filename):
+        if filename not in _modules:
+            _modules[filename] = BdbModule(filename)
+        self.bdb_module = _modules[filename]
+        self.breakpts = {}
+
+    def add_breakpoint(self, bp):
+        firstlineno, actual_lno = self.bdb_module.get_actual_bp(bp.line)
+        if firstlineno not in self.breakpts:
+            self.breakpts[firstlineno] = {}
+        line_bps = self.breakpts[firstlineno]
+        if actual_lno not in line_bps:
+            line_bps[actual_lno] = []
+        line_bps[actual_lno].append(bp)
+        return firstlineno, actual_lno
+
+    def delete_breakpoint(self, bp):
+        firstlineno, actual_lno = bp.actual_bp
+        try:
+            line_bps = self.breakpts[firstlineno]
+            bplist = line_bps[actual_lno]
+            bplist.remove(bp)
+        except (KeyError, ValueError):
+            assert False, ('Internal error: bpbynumber and breakpts'
+                            ' are inconsistent')
+        if not bplist:
+            del line_bps[actual_lno]
+        if not line_bps:
+            del self.breakpts[firstlineno]
+
+    def get_breakpoints(self, lineno):
+        """Return the list of breakpoints set at lineno."""
+        try:
+            firstlineno, actual_lno = self.bdb_module.get_actual_bp(lineno)
+        except BdbError:
+            return []
+        if firstlineno not in self.breakpts:
+            return []
+        line_bps = self.breakpts[firstlineno]
+        if actual_lno not in line_bps:
+            return []
+        return [bp for bp in sorted(line_bps[actual_lno],
+                    key=attrgetter('number')) if bp.line == lineno]
+
+    def all_breakpoints(self):
+        bpts = []
+        for line_bps in self.breakpts.values():
+            for bplist in line_bps.values():
+                bpts.extend(bplist)
+        return [bp for bp in sorted(bpts, key=attrgetter('number'))]
 
 class Bdb:
     """Generic Python debugger base class.
@@ -20,22 +259,15 @@ class Bdb:
 
     def __init__(self, skip=None):
         self.skip = set(skip) if skip else None
-        self.breaks = {}
-        self.fncache = {}
         self.frame_returning = None
+        # A dictionary mapping a filename to a ModuleBreakpoints instance.
+        self.breakpoints = {}
 
+        # Backward compatibility
     def canonic(self, filename):
-        if filename == "<" + filename[1:-1] + ">":
-            return filename
-        canonic = self.fncache.get(filename)
-        if not canonic:
-            canonic = os.path.abspath(filename)
-            canonic = os.path.normcase(canonic)
-            self.fncache[filename] = canonic
-        return canonic
+        return canonic(filename)
 
     def reset(self):
-        import linecache
         linecache.checkcache()
         self.botframe = None
         self._set_stopinfo(None, None)
@@ -61,9 +293,14 @@ class Bdb:
         return self.trace_dispatch
 
     def dispatch_line(self, frame):
-        if self.stop_here(frame) or self.break_here(frame):
+        if self.stop_here(frame):
             self.user_line(frame)
             if self.quitting: raise BdbQuit
+        else:
+            breakpoint_hits = self.break_here(frame)
+            if breakpoint_hits:
+                self.user_line(frame, breakpoint_hits)
+                if self.quitting: raise BdbQuit
         return self.trace_dispatch
 
     def dispatch_call(self, frame, arg):
@@ -72,7 +309,7 @@ class Bdb:
             # First call of dispatch since reset()
             self.botframe = frame.f_back # (CT) Note that this may also be None!
             return self.trace_dispatch
-        if not (self.stop_here(frame) or self.break_anywhere(frame)):
+        if not (self.stop_here(frame) or self.break_at_function(frame)):
             # No need to trace this function
             return # None
         self.user_call(frame, arg)
@@ -122,32 +359,34 @@ class Bdb:
         return False
 
     def break_here(self, frame):
-        filename = self.canonic(frame.f_code.co_filename)
-        if filename not in self.breaks:
-            return False
-        lineno = frame.f_lineno
-        if lineno not in self.breaks[filename]:
-            # The line itself has no breakpoint, but maybe the line is the
-            # first line of a function with breakpoint set by function name.
-            lineno = frame.f_code.co_firstlineno
-            if lineno not in self.breaks[filename]:
-                return False
+        filename = canonic(frame.f_code.co_filename)
+        if filename not in self.breakpoints:
+            return None
+        module_bps = self.breakpoints[filename]
+        firstlineno = frame.f_code.co_firstlineno
+        if (firstlineno not in module_bps.breakpts or
+                frame.f_lineno not in module_bps.breakpts[firstlineno]):
+            return None
 
-        # flag says ok to delete temp. bp
-        (bp, flag) = effective(filename, lineno, frame)
-        if bp:
-            self.currentbp = bp.number
-            if (flag and bp.temporary):
-                self.do_clear(str(bp.number))
+        # Handle multiple breakpoints on the same line (issue 14789)
+        effective_bp_list = []
+        temporaries = []
+        for bp in module_bps.breakpts[firstlineno][frame.f_lineno]:
+            stop, delete = bp.process_hit_event(frame)
+            if stop:
+                effective_bp_list.append(bp.number)
+                if bp.temporary and delete:
+                    temporaries.append(bp.number)
+        if effective_bp_list:
+            return sorted(effective_bp_list), sorted(temporaries)
+
+    def break_at_function(self, frame):
+        filename = canonic(frame.f_code.co_filename)
+        if filename not in self.breakpoints:
+            return False
+        if frame.f_code.co_firstlineno in self.breakpoints[filename].breakpts:
             return True
-        else:
-            return False
-
-    def do_clear(self, arg):
-        raise NotImplementedError("subclass of bdb must implement do_clear()")
-
-    def break_anywhere(self, frame):
-        return self.canonic(frame.f_code.co_filename) in self.breaks
+        return False
 
     # Derived classes should override the user_* methods
     # to gain control.
@@ -157,8 +396,13 @@ class Bdb:
         that we ever need to stop in this function."""
         pass
 
-    def user_line(self, frame):
-        """This method is called when we stop or break at this line."""
+    def user_line(self, frame, breakpoint_hits=None):
+        """This method is called when we stop or break at this line.
+
+        'breakpoint_hits' is a tuple of the list of breakpoint numbers that
+        have been hit at this line, and of the list of temporaries that must be
+        deleted.
+        """
         pass
 
     def user_return(self, frame, return_value):
@@ -227,7 +471,7 @@ class Bdb:
     def set_continue(self):
         # Don't stop except at breakpoints or when finished
         self._set_stopinfo(self.botframe, None, -1)
-        if not self.breaks:
+        if not self.has_breaks():
             # no breakpoints; run without debugger overhead
             sys.settrace(None)
             frame = sys._getframe().f_back
@@ -244,39 +488,29 @@ class Bdb:
     # Derived classes and clients can call the following methods
     # to manipulate breakpoints.  These methods return an
     # error message is something went wrong, None if all is well.
-    # Set_break prints out the breakpoint line and file:lineno.
     # Call self.get_*break*() to see the breakpoints or better
     # for bp in Breakpoint.bpbynumber: if bp: bp.bpprint().
 
-    def set_break(self, filename, lineno, temporary=False, cond=None,
+    def set_break(self, fname, lineno, temporary=False, cond=None,
                   funcname=None):
-        filename = self.canonic(filename)
-        import linecache # Import as late as possible
-        line = linecache.getline(filename, lineno)
-        if not line:
-            return 'Line %s:%d does not exist' % (filename, lineno)
-        list = self.breaks.setdefault(filename, [])
-        if lineno not in list:
-            list.append(lineno)
-        bp = Breakpoint(filename, lineno, temporary, cond, funcname)
-
-    def _prune_breaks(self, filename, lineno):
-        if (filename, lineno) not in Breakpoint.bplist:
-            self.breaks[filename].remove(lineno)
-        if not self.breaks[filename]:
-            del self.breaks[filename]
+        filename = canonic(fname)
+        if filename not in self.breakpoints:
+            module_bps = ModuleBreakpoints(filename)
+        else:
+            module_bps = self.breakpoints[filename]
+        if funcname:
+            lineno = module_bps.bdb_module.get_func_lno(funcname)
+        bp = Breakpoint(filename, lineno, module_bps, temporary, cond)
+        if filename not in self.breakpoints:
+            self.breakpoints[filename] = module_bps
+        return bp
 
     def clear_break(self, filename, lineno):
-        filename = self.canonic(filename)
-        if filename not in self.breaks:
-            return 'There are no breakpoints in %s' % filename
-        if lineno not in self.breaks[filename]:
+        bplist = self.get_breaks(filename, lineno)
+        if not bplist:
             return 'There is no breakpoint at %s:%d' % (filename, lineno)
-        # If there's only one bp in the list for that file,line
-        # pair, then remove the breaks entry
-        for bp in Breakpoint.bplist[filename, lineno][:]:
+        for bp in bplist:
             bp.deleteMe()
-        self._prune_breaks(filename, lineno)
 
     def clear_bpbynumber(self, arg):
         try:
@@ -284,25 +518,13 @@ class Bdb:
         except ValueError as err:
             return str(err)
         bp.deleteMe()
-        self._prune_breaks(bp.file, bp.line)
-
-    def clear_all_file_breaks(self, filename):
-        filename = self.canonic(filename)
-        if filename not in self.breaks:
-            return 'There are no breakpoints in %s' % filename
-        for line in self.breaks[filename]:
-            blist = Breakpoint.bplist[filename, line]
-            for bp in blist:
-                bp.deleteMe()
-        del self.breaks[filename]
 
     def clear_all_breaks(self):
-        if not self.breaks:
+        if not self.has_breaks():
             return 'There are no breakpoints'
         for bp in Breakpoint.bpbynumber:
             if bp:
                 bp.deleteMe()
-        self.breaks = {}
 
     def get_bpbynumber(self, arg):
         if not arg:
@@ -319,26 +541,21 @@ class Bdb:
             raise ValueError('Breakpoint %d already deleted' % number)
         return bp
 
-    def get_break(self, filename, lineno):
-        filename = self.canonic(filename)
-        return filename in self.breaks and \
-            lineno in self.breaks[filename]
-
     def get_breaks(self, filename, lineno):
-        filename = self.canonic(filename)
-        return filename in self.breaks and \
-            lineno in self.breaks[filename] and \
-            Breakpoint.bplist[filename, lineno] or []
+        filename = canonic(filename)
+        if filename in self.breakpoints:
+            return self.breakpoints[filename].get_breakpoints(lineno)
+        return []
 
     def get_file_breaks(self, filename):
-        filename = self.canonic(filename)
-        if filename in self.breaks:
-            return self.breaks[filename]
-        else:
+        filename = canonic(filename)
+        if filename not in self.breakpoints:
             return []
+        return [bp.line for bp in self.breakpoints[filename].all_breakpoints()]
 
-    def get_all_breaks(self):
-        return self.breaks
+    def has_breaks(self):
+        return any(self.breakpoints[f].breakpts.keys()
+                        for f in self.breakpoints)
 
     # Derived classes and clients can call the following method
     # to get a data structure representing a stack trace.
@@ -362,9 +579,9 @@ class Bdb:
         return stack, i
 
     def format_stack_entry(self, frame_lineno, lprefix=': '):
-        import linecache, reprlib
+        import reprlib
         frame, lineno = frame_lineno
-        filename = self.canonic(frame.f_code.co_filename)
+        filename = canonic(frame.f_code.co_filename)
         s = '%s(%r)' % (filename, lineno)
         if frame.f_code.co_name:
             s += frame.f_code.co_name
@@ -455,29 +672,19 @@ class Breakpoint:
     Implements temporary breakpoints, ignore counts, disabling and
     (re)-enabling, and conditionals.
 
-    Breakpoints are indexed by number through bpbynumber and by
-    the file,line tuple using bplist.  The former points to a
-    single instance of class Breakpoint.  The latter points to a
-    list of such instances since there may be more than one
-    breakpoint per line.
+    Breakpoints are indexed by number through bpbynumber.
 
     """
 
-    # XXX Keeping state in the class is a mistake -- this means
-    # you cannot have more than one active Bdb instance.
-
     next = 1        # Next bp to be assigned
-    bplist = {}     # indexed by (file, lineno) tuple
     bpbynumber = [None] # Each entry is None or an instance of Bpt
-                # index 0 is unused, except for marking an
-                # effective break .... see effective()
 
-    def __init__(self, file, line, temporary=False, cond=None, funcname=None):
-        self.funcname = funcname
-        # Needed if funcname is not None.
-        self.func_first_executable_line = None
+    def __init__(self, file, line, module, temporary=False,
+                cond=None):
         self.file = file    # This better be in canonical form!
         self.line = line
+        self.module = module
+        self.actual_bp = module.add_breakpoint(self)
         self.temporary = temporary
         self.cond = cond
         self.enabled = True
@@ -485,26 +692,39 @@ class Breakpoint:
         self.hits = 0
         self.number = Breakpoint.next
         Breakpoint.next += 1
-        # Build the two lists
         self.bpbynumber.append(self)
-        if (file, line) in self.bplist:
-            self.bplist[file, line].append(self)
-        else:
-            self.bplist[file, line] = [self]
 
     def deleteMe(self):
-        index = (self.file, self.line)
-        self.bpbynumber[self.number] = None   # No longer in list
-        self.bplist[index].remove(self)
-        if not self.bplist[index]:
-            # No more bp for this f:l combo
-            del self.bplist[index]
+        if self.bpbynumber[self.number]:
+            self.bpbynumber[self.number] = None   # No longer in list
+            self.module.delete_breakpoint(self)
 
     def enable(self):
         self.enabled = True
 
     def disable(self):
         self.enabled = False
+
+    def process_hit_event(self, frame):
+        """Return (stop_state, delete_temporary) at a breakpoint hit event."""
+        if not self.enabled:
+            return False, False
+        # Count every hit when breakpoint is enabled.
+        self.hits += 1
+        # A conditional breakpoint.
+        if self.cond:
+            try:
+                if not eval(self.cond, frame.f_globals, frame.f_locals):
+                    return False, False
+            except:
+                # If the breakpoint condition evaluation fails, the most
+                # conservative thing is to stop on the breakpoint.  Don't
+                # delete temporary, as another hint to the user.
+                return True, False
+        if self.ignore > 0:
+            self.ignore -= 1
+            return False, False
+        return True, True
 
     def bpprint(self, out=None):
         if out is None:
@@ -537,81 +757,6 @@ class Breakpoint:
     def __str__(self):
         return 'breakpoint %s at %s:%s' % (self.number, self.file, self.line)
 
-# -----------end of Breakpoint class----------
-
-def checkfuncname(b, frame):
-    """Check whether we should break here because of `b.funcname`."""
-    if not b.funcname:
-        # Breakpoint was set via line number.
-        if b.line != frame.f_lineno:
-            # Breakpoint was set at a line with a def statement and the function
-            # defined is called: don't break.
-            return False
-        return True
-
-    # Breakpoint set via function name.
-
-    if frame.f_code.co_name != b.funcname:
-        # It's not a function call, but rather execution of def statement.
-        return False
-
-    # We are in the right frame.
-    if not b.func_first_executable_line:
-        # The function is entered for the 1st time.
-        b.func_first_executable_line = frame.f_lineno
-
-    if  b.func_first_executable_line != frame.f_lineno:
-        # But we are not at the first line number: don't break.
-        return False
-    return True
-
-# Determines if there is an effective (active) breakpoint at this
-# line of code.  Returns breakpoint number or 0 if none
-def effective(file, line, frame):
-    """Determine which breakpoint for this file:line is to be acted upon.
-
-    Called only if we know there is a bpt at this
-    location.  Returns breakpoint that was triggered and a flag
-    that indicates if it is ok to delete a temporary bp.
-
-    """
-    possibles = Breakpoint.bplist[file, line]
-    for b in possibles:
-        if not b.enabled:
-            continue
-        if not checkfuncname(b, frame):
-            continue
-        # Count every hit when bp is enabled
-        b.hits += 1
-        if not b.cond:
-            # If unconditional, and ignoring go on to next, else break
-            if b.ignore > 0:
-                b.ignore -= 1
-                continue
-            else:
-                # breakpoint and marker that it's ok to delete if temporary
-                return (b, True)
-        else:
-            # Conditional bp.
-            # Ignore count applies only to those bpt hits where the
-            # condition evaluates to true.
-            try:
-                val = eval(b.cond, frame.f_globals, frame.f_locals)
-                if val:
-                    if b.ignore > 0:
-                        b.ignore -= 1
-                        # continue
-                    else:
-                        return (b, True)
-                # else:
-                #   continue
-            except:
-                # if eval fails, most conservative thing is to stop on
-                # breakpoint regardless of ignore count.  Don't delete
-                # temporary, as another hint to user.
-                return (b, False)
-    return (None, None)
-
 
 # -------------------- testing --------------------
 
@@ -621,10 +766,9 @@ class Tdb(Bdb):
         if not name: name = '???'
         print('+++ call', name, args)
     def user_line(self, frame):
-        import linecache
         name = frame.f_code.co_name
         if not name: name = '???'
-        fn = self.canonic(frame.f_code.co_filename)
+        fn = canonic(frame.f_code.co_filename)
         line = linecache.getline(fn, frame.f_lineno, frame.f_globals)
         print('+++', fn, frame.f_lineno, name, ':', line.strip())
     def user_return(self, frame, retval):
