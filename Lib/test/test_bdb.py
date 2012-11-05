@@ -356,6 +356,50 @@ class RunningTestCase(SetMethodTestCase):
         ]
         self.runcall(dbg_foobar)
 
+    def test_step_at_return_with_no_trace_in_caller(self):
+        self.create_module("""
+            def foo():
+                lno = 3
+        """, 'test_module_2')
+        self.create_module("""
+            from test_module_2 import foo
+            foo()
+            lno = 4
+        """)
+        self.send_expect = [
+            break_func('foo', 'test_module_2.py'), (),
+            CONTINUE, ('line', 3, 'foo', ({1:1}, [])),
+            STEP, ('return', 3, 'foo'),
+            STEP, ('line', 4, '<module>'),
+            QUIT, (),
+        ]
+        self.runcall(dbg_module)
+
+    def test_step_at_exception_with_no_trace_in_caller(self):
+        self.create_module("""
+            def foo():
+                x = 1 / 0
+        """, 'test_module_2')
+        self.create_module("""
+            from test_module_2 import foo
+            try:
+                foo()
+            except:
+                lno = 6
+            lno = 7
+        """)
+        self.send_expect = [
+            break_func('foo', 'test_module_2.py'), (),
+            CONTINUE, ('line', 3, 'foo', ({1:1}, [])),
+            STEP, ('exception', 3, 'foo'),
+            STEP, ('return', 3, 'foo'),
+            STEP, ('exception', 4, '<module>'),
+            STEP, ('line', 5, '<module>'),
+            STEP, ('line', 6, '<module>'),
+            QUIT, (),
+        ]
+        self.runcall(dbg_module)
+
     def test_next(self):
         self.send_expect = [
             STEP, ('line', 3, 'dbg_foobar'),
@@ -396,6 +440,50 @@ class RunningTestCase(SetMethodTestCase):
         ]
         self.runcall(dbg_foobar)
 
+    def test_next_at_return_with_no_trace_in_caller(self):
+        self.create_module("""
+            def foo():
+                lno = 3
+        """, 'test_module_2')
+        self.create_module("""
+            from test_module_2 import foo
+            foo()
+            lno = 4
+        """)
+        self.send_expect = [
+            break_func('foo', 'test_module_2.py'), (),
+            CONTINUE, ('line', 3, 'foo', ({1:1}, [])),
+            STEP, ('return', 3, 'foo'),
+            NEXT, ('line', 4, '<module>'),
+            QUIT, (),
+        ]
+        self.runcall(dbg_module)
+
+    def test_next_at_frame_with_no_trace_function(self):
+        self.create_module("""
+            def foo_3():
+                lno = 3
+        """, 'test_module_3')
+        self.create_module("""
+            from test_module_3 import foo_3
+            def foo():
+                foo_3()
+                lno = 5
+        """, 'test_module_2')
+        self.create_module("""
+            from test_module_2 import foo
+            foo()
+            lno = 4
+        """)
+        self.send_expect = [
+            break_func('foo_3', 'test_module_3.py'), (),
+            CONTINUE, ('line', 3, 'foo_3', ({1:1}, [])),
+            UP, (),
+            NEXT, ('line', 5, 'foo'),
+            QUIT, (),
+        ]
+        self.runcall(dbg_module)
+
     def test_return(self):
         self.send_expect = [
             STEP, ('line', 3, 'dbg_foobar'),
@@ -416,6 +504,50 @@ class RunningTestCase(SetMethodTestCase):
             QUIT, (),
         ]
         self.runcall(dbg_foobar)
+
+    def test_return_at_return_with_no_trace_in_caller(self):
+        self.create_module("""
+            def foo():
+                lno = 3
+        """, 'test_module_2')
+        self.create_module("""
+            from test_module_2 import foo
+            foo()
+            lno = 4
+        """)
+        self.send_expect = [
+            break_func('foo', 'test_module_2.py'), (),
+            CONTINUE, ('line', 3, 'foo', ({1:1}, [])),
+            STEP, ('return', 3, 'foo'),
+            RETURN, ('line', 4, '<module>'),
+            QUIT, (),
+        ]
+        self.runcall(dbg_module)
+
+    def test_return_at_frame_with_no_trace_function(self):
+        self.create_module("""
+            def foo_3():
+                lno = 3
+        """, 'test_module_3')
+        self.create_module("""
+            from test_module_3 import foo_3
+            def foo():
+                foo_3()
+                lno = 5
+        """, 'test_module_2')
+        self.create_module("""
+            from test_module_2 import foo
+            foo()
+            lno = 4
+        """)
+        self.send_expect = [
+            break_func('foo_3', 'test_module_3.py'), (),
+            CONTINUE, ('line', 3, 'foo_3', ({1:1}, [])),
+            UP, (),
+            RETURN, ('return', 5, 'foo'),
+            QUIT, (),
+        ]
+        self.runcall(dbg_module)
 
     def test_until(self):
         self.send_expect = [
@@ -445,6 +577,50 @@ class RunningTestCase(SetMethodTestCase):
             QUIT, (),
         ]
         self.runcall(dbg_foobar)
+
+    def test_until_at_return_with_no_trace_in_caller(self):
+        self.create_module("""
+            def foo():
+                lno = 3
+        """, 'test_module_2')
+        self.create_module("""
+            from test_module_2 import foo
+            foo()
+            lno = 4
+        """)
+        self.send_expect = [
+            break_func('foo', 'test_module_2.py'), (),
+            CONTINUE, ('line', 3, 'foo', ({1:1}, [])),
+            STEP, ('return', 3, 'foo'),
+            UNTIL, ('line', 4, '<module>'),
+            QUIT, (),
+        ]
+        self.runcall(dbg_module)
+
+    def test_until_at_frame_with_no_trace_function(self):
+        self.create_module("""
+            def foo_3():
+                lno = 3
+        """, 'test_module_3')
+        self.create_module("""
+            from test_module_3 import foo_3
+            def foo():
+                foo_3()
+                lno = 5
+        """, 'test_module_2')
+        self.create_module("""
+            from test_module_2 import foo
+            foo()
+            lno = 4
+        """)
+        self.send_expect = [
+            break_func('foo_3', 'test_module_3.py'), (),
+            CONTINUE, ('line', 3, 'foo_3', ({1:1}, [])),
+            UP, (),
+            UNTIL, ('line', 5, 'foo'),
+            QUIT, (),
+        ]
+        self.runcall(dbg_module)
 
     def test_skip(self):
         self.set_skip(('importlib*', '_abcoll', 'os', 'test_module'))
@@ -891,6 +1067,29 @@ class IssueTestCase(SetMethodTestCase):
         self.send_expect = [
             break_func('C.c_method', TEST_MODULE), (),
             CONTINUE, ('line', 4, 'c_method', ({1:1}, [])),
+            QUIT, (),
+        ]
+        self.runcall(dbg_module)
+
+    def test_issue_14751(self):
+        # Set a breakpoint in the call stack.
+        self.create_module("""
+            def foo_2():
+                lno = 3
+        """, 'test_module_2')
+        self.create_module("""
+            from test_module_2 import foo_2
+            def foo():
+                foo_2()
+                lno = 5
+
+            foo()
+        """)
+        self.send_expect = [
+            break_func('foo_2', 'test_module_2.py'), (),
+            CONTINUE, ('line', 3, 'foo_2', ({1:1}, [])),
+            break_lineno(5, 'test_module.py'), (),
+            CONTINUE, ('line', 5, 'foo', ({2:1}, [])),
             QUIT, (),
         ]
         self.runcall(dbg_module)
