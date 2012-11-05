@@ -255,11 +255,25 @@ class Bdb:
     This class takes care of details of the trace facility;
     a derived class should implement user interaction.
     The standard debugger class (pdb.Pdb) is an example.
+
+    The 'stopframe_lno' attribute is a tuple of (stopframe, lineno) where:
+        'stopframe' is the frame where the debugger must stop. With a value of
+        None, it means stop at any frame. When not None, the debugger stops at
+        the 'return' debug event in that frame, whatever the value of 'lineno'.
+
+        The debugger stops when the current line number in 'stopframe' is
+        greater or equal to 'lineno'. The value of -1 means the infinite line
+        number, i.e. don't stop.
+
+        Therefore:
+            (None, 0):   always stop
+            (None, -1):  never stop
+            (frame, 0):  stop on next statement in that frame
+            (frame, -1): stop when returning from frame
     """
 
     def __init__(self, skip=None):
         self.skip = set(skip) if skip else None
-        self.frame_returning = None
         # A dictionary mapping a filename to a ModuleBreakpoints instance.
         self.breakpoints = {}
 
@@ -270,9 +284,11 @@ class Bdb:
     def reset(self):
         linecache.checkcache()
         self.botframe = None
-        self._set_stopinfo(None, None)
+        self._curframe = None
+        self._set_stopinfo((None, 0))
 
     def trace_dispatch(self, frame, event, arg):
+        self._curframe = frame
         if self.quitting:
             return # None
         if event == 'line':
@@ -317,13 +333,16 @@ class Bdb:
         return self.trace_dispatch
 
     def dispatch_return(self, frame, arg):
-        if self.stop_here(frame) or frame == self.returnframe:
-            try:
-                self.frame_returning = frame
-                self.user_return(frame, arg)
-            finally:
-                self.frame_returning = None
+        if self.stop_here(frame) or frame is self.stopframe_lno[0]:
+            self.user_return(frame, arg)
             if self.quitting: raise BdbQuit
+            # Set the trace function in the caller when returning from the
+            # current frame after step, next, until, return commands.
+            if (self.stopframe_lno == (None, 0) or
+                                    frame is self.stopframe_lno[0]):
+                if frame.f_back and not frame.f_back.f_trace:
+                    frame.f_back.f_trace = self.trace_dispatch
+                self._set_stopinfo((None, 0))
         return self.trace_dispatch
 
     def dispatch_exception(self, frame, arg):
@@ -343,19 +362,14 @@ class Bdb:
         return False
 
     def stop_here(self, frame):
-        # (CT) stopframe may now also be None, see dispatch_call.
-        # (CT) the former test for None is therefore removed from here.
         if self.skip and \
                self.is_skipped_module(frame.f_globals.get('__name__')):
             return False
-        if frame is self.stopframe:
-            if self.stoplineno == -1:
+        stopframe, lineno = self.stopframe_lno
+        if frame is stopframe or not stopframe:
+            if lineno == -1:
                 return False
-            return frame.f_lineno >= self.stoplineno
-        while frame is not None and frame is not self.stopframe:
-            if frame is self.botframe:
-                return True
-            frame = frame.f_back
+            return frame.f_lineno >= lineno
         return False
 
     def break_here(self, frame):
@@ -414,44 +428,42 @@ class Bdb:
         but only if we are to stop at or just below this level."""
         pass
 
-    def _set_stopinfo(self, stopframe, returnframe, stoplineno=0):
-        self.stopframe = stopframe
-        self.returnframe = returnframe
+    def _set_stopinfo(self, stopframe_lno):
+        # Ensure that stopframe belongs to the stack frame in the interval
+        # [self.botframe, self._curframe] and that it gets a trace function.
+        stopframe, lineno = stopframe_lno
+        frame = self._curframe
+        while stopframe and frame and frame is not stopframe:
+            if frame is self.botframe:
+                stopframe = self.botframe
+                break
+            frame = frame.f_back
+        if stopframe and not stopframe.f_trace:
+            stopframe.f_trace = self.trace_dispatch
+        self.stopframe_lno = stopframe, lineno
         self.quitting = False
-        # stoplineno >= 0 means: stop at line >= the stoplineno
-        # stoplineno -1 means: don't stop at all
-        self.stoplineno = stoplineno
 
     # Derived classes and clients can call the following methods
     # to affect the stepping state.
 
     def set_until(self, frame, lineno=None):
-        """Stop when the line with the line no greater than the current one is
-        reached or when returning from current frame"""
-        # the name "until" is borrowed from gdb
+        """Stop when the current line number in frame is greater than lineno or
+        when returning from frame."""
         if lineno is None:
             lineno = frame.f_lineno + 1
-        self._set_stopinfo(frame, frame, lineno)
+        self._set_stopinfo((frame, lineno))
 
     def set_step(self):
         """Stop after one line of code."""
-        # Issue #13183: pdb skips frames after hitting a breakpoint and running
-        # step commands.
-        # Restore the trace function in the caller (that may not have been set
-        # for performance reasons) when returning from the current frame.
-        if self.frame_returning:
-            caller_frame = self.frame_returning.f_back
-            if caller_frame and not caller_frame.f_trace:
-                caller_frame.f_trace = self.trace_dispatch
-        self._set_stopinfo(None, None)
+        self._set_stopinfo((None, 0))
 
     def set_next(self, frame):
         """Stop on the next line in or below the given frame."""
-        self._set_stopinfo(frame, None)
+        self._set_stopinfo((frame, 0))
 
     def set_return(self, frame):
         """Stop when returning from the given frame."""
-        self._set_stopinfo(frame.f_back, frame)
+        self._set_stopinfo((frame, -1))
 
     def set_trace(self, frame=None):
         """Start debugging from `frame`.
@@ -461,8 +473,8 @@ class Bdb:
         if frame is None:
             frame = sys._getframe().f_back
         self.reset()
+        frame.f_trace = self.trace_dispatch
         while frame:
-            frame.f_trace = self.trace_dispatch
             self.botframe = frame
             frame = frame.f_back
         self.set_step()
@@ -470,7 +482,7 @@ class Bdb:
 
     def set_continue(self):
         # Don't stop except at breakpoints or when finished
-        self._set_stopinfo(self.botframe, None, -1)
+        self._set_stopinfo((None, -1))
         if not self.has_breaks():
             # no breakpoints; run without debugger overhead
             sys.settrace(None)
@@ -480,7 +492,7 @@ class Bdb:
                 frame = frame.f_back
 
     def set_quit(self):
-        self.stopframe = self.botframe
+        self.stopframe_lno = (None, -1)
         self.returnframe = None
         self.quitting = True
         sys.settrace(None)
@@ -503,6 +515,20 @@ class Bdb:
         bp = Breakpoint(filename, lineno, module_bps, temporary, cond)
         if filename not in self.breakpoints:
             self.breakpoints[filename] = module_bps
+
+        # Set the trace function when the breakpoint is set in one of the
+        # frames of the frame stack.
+        firstlineno, actual_lno = bp.actual_bp
+        frame = self._curframe
+        while frame:
+            if (filename == frame.f_code.co_filename and
+                        firstlineno == frame.f_code.co_firstlineno):
+                if not frame.f_trace:
+                    frame.f_trace = self.trace_dispatch
+            if frame is self.botframe:
+                break
+            frame = frame.f_back
+
         return bp
 
     def clear_break(self, filename, lineno):
