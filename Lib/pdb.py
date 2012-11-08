@@ -232,8 +232,8 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         self.aliases = {}
         self.displaying = {}
         self.mainpyfile = ''
-        self._wait_for_mainpyfile = False
         self.tb_lineno = {}
+        self.forget()
         # Try to load readline if it exists
         try:
             import readline
@@ -273,14 +273,9 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         if self.allow_kbdint:
             raise KeyboardInterrupt
         self.message("\nProgram interrupted. (Use 'cont' to resume).")
-        self.set_step()
         self.set_trace(frame)
         # restore previous signal handler
         signal.signal(signal.SIGINT, self._previous_sigint_handler)
-
-    def reset(self):
-        bdb.Bdb.reset(self)
-        self.forget()
 
     def forget(self):
         self.lineno = None
@@ -330,19 +325,11 @@ class Pdb(bdb.Bdb, cmd.Cmd):
     def user_call(self, frame, argument_list):
         """This method is called when there is the remote possibility
         that we ever need to stop in this function."""
-        if self._wait_for_mainpyfile:
-            return
-        if self.stop_here(frame):
-            self.message('--Call--')
-            self.interaction(frame, None)
+        self.message('--Call--')
+        self.interaction(frame, None)
 
     def user_line(self, frame, breakpoint_hits=None):
         """This function is called when we stop or break at this line."""
-        if self._wait_for_mainpyfile:
-            if (self.mainpyfile != bdb.canonic(frame.f_code.co_filename)
-                or frame.f_lineno <= 0):
-                return
-            self._wait_for_mainpyfile = False
         if not breakpoint_hits or self.bp_commands(frame, breakpoint_hits):
             self.interaction(frame, None)
 
@@ -384,8 +371,6 @@ class Pdb(bdb.Bdb, cmd.Cmd):
 
     def user_return(self, frame, return_value):
         """This function is called when a return trap is set here."""
-        if self._wait_for_mainpyfile:
-            return
         frame.f_locals['__return__'] = return_value
         self.message('--Return--')
         self.interaction(frame, None)
@@ -393,8 +378,6 @@ class Pdb(bdb.Bdb, cmd.Cmd):
     def user_exception(self, frame, exc_info):
         """This function is called if an exception occurs,
         but only if we are to stop at or just below this level."""
-        if self._wait_for_mainpyfile:
-            return
         exc_type, exc_value, exc_traceback = exc_info
         frame.f_locals['__exception__'] = exc_type, exc_value
         self.message(traceback.format_exception_only(exc_type,
@@ -1519,18 +1502,12 @@ class Pdb(bdb.Bdb, cmd.Cmd):
                                   "__builtins__": __builtins__,
                                  })
 
-        # When bdb sets tracing, a number of call and line events happens
-        # BEFORE debugger even reaches user's code (and the exact sequence of
-        # events depends on python version). So we take special measures to
-        # avoid stopping before we reach the main script (see user_line and
-        # user_call for details).
-        self._wait_for_mainpyfile = True
         self.mainpyfile = bdb.canonic(filename)
         self._user_requested_quit = False
         with open(filename, "rb") as fp:
-            statement = "exec(compile(%r, %r, 'exec'))" % \
-                        (fp.read(), self.mainpyfile)
-        self.run(statement)
+            content = fp.read()
+        self.forget()
+        self.run(compile(content, self.mainpyfile, 'exec'))
 
 # Collect all command help into docstring, if not run with -OO
 
@@ -1582,7 +1559,6 @@ def post_mortem(t=None):
                          "exception is being handled")
 
     p = Pdb()
-    p.reset()
     p.interaction(None, t)
 
 def pm():

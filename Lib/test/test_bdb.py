@@ -1,4 +1,5 @@
 import sys
+import signal
 import unittest
 import linecache
 import textwrap
@@ -50,13 +51,21 @@ def _reset_Breakpoint():
 class BdbTest(bdb.Bdb):
     """A subclass of Bdb that processes send_expect sequences."""
 
-    def __init__(self, test_case, skip=None):
+    def __init__(self, test_case, skip=None, sigint=False):
         bdb.Bdb.__init__(self, skip=skip)
         self.test_case = test_case
+        if sigint:
+            self._previous_sigint_handler = \
+                signal.signal(signal.SIGINT, self.sigint_handler)
+
         self.se_cnt = 0
         self.send_list = list(islice(test_case.send_expect, 0, None, 2))
         self.expct_list = list(islice(
                 chain([()], test_case.send_expect), 0, None, 2))
+
+    def sigint_handler(self, signum, frame):
+        signal.signal(signal.SIGINT, self._previous_sigint_handler)
+        self.set_trace(frame)
 
     def dispatch_call(self, frame, arg):
         if debug and self.botframe is None:
@@ -299,9 +308,13 @@ class SetMethodTestCase(unittest.TestCase):
     def __init__(self, methodName='runTest'):
         unittest.TestCase.__init__(self, methodName)
         self.set_skip(None)
+        self.set_sigint(False)
 
     def set_skip(self, skip):
         self.skip = skip
+
+    def set_sigint(self, sigint):
+        self.sigint = sigint
 
     def setUp(self):
         # test_pdb does not reset Breakpoint class attributes on exit :-(
@@ -324,7 +337,7 @@ class SetMethodTestCase(unittest.TestCase):
         bdb._modules = {}
 
     def runcall(self, func, *args, **kwds):
-        bdb = BdbTest(self, skip=self.skip)
+        bdb = BdbTest(self, skip=self.skip, sigint=self.sigint)
         try:
             bdb.runcall(func, *args, **kwds)
         except self.failureException as err:
@@ -333,11 +346,33 @@ class SetMethodTestCase(unittest.TestCase):
         self.assertFalse(bdb.send_list,
                 'All send_expect sequences have not been processed.')
 
-class RunningTestCase(SetMethodTestCase):
+    def bdb_run(self, statements):
+        self.create_module(statements)
+        bdb = BdbTest(self, skip=self.skip, sigint=self.sigint)
+        try:
+            bdb.run(compile(textwrap.dedent(statements), TEST_MODULE, 'exec'))
+        except self.failureException as err:
+            # Do not show the BdbTest traceback when the test fails.
+            raise self.failureException() from err
+        self.assertFalse(bdb.send_list,
+                'All send_expect sequences have not been processed.')
+
+    def bdb_runeval(self, expr, globals=None, locals=None):
+        bdb = BdbTest(self, skip=self.skip, sigint=self.sigint)
+        try:
+            bdb.runeval(expr, globals, locals)
+        except self.failureException as err:
+            # Do not show the BdbTest traceback when the test fails.
+            raise self.failureException() from err
+        self.assertFalse(bdb.send_list,
+                'All send_expect sequences have not been processed.')
+
+class RunCallTestCase(SetMethodTestCase):
     """Test step, next, return and until set methods."""
 
     def test_step(self):
         self.send_expect = [
+            STEP, ('line', 2, 'dbg_foobar'),
             STEP, ('line', 3, 'dbg_foobar'),
             STEP, ('call', 1, 'dbg_foo'),
             STEP, ('line', 2, 'dbg_foo'),
@@ -347,6 +382,7 @@ class RunningTestCase(SetMethodTestCase):
 
     def test_step_on_last_statement(self):
         self.send_expect = [
+            STEP, ('line', 2, 'dbg_foobar'),
             STEP, ('line', 3, 'dbg_foobar'),
             STEP, ('call', 1, 'dbg_foo'),
             break_lineno(10), ('line', 1, 'dbg_foo'),
@@ -402,6 +438,7 @@ class RunningTestCase(SetMethodTestCase):
 
     def test_next(self):
         self.send_expect = [
+            STEP, ('line', 2, 'dbg_foobar'),
             STEP, ('line', 3, 'dbg_foobar'),
             NEXT, ('line', 4, 'dbg_foobar'),
             STEP, ('call', 1, 'dbg_bar'),
@@ -412,6 +449,7 @@ class RunningTestCase(SetMethodTestCase):
 
     def test_next_on_plain_statement(self):
         self.send_expect = [
+            STEP, ('line', 2, 'dbg_foobar'),
             STEP, ('line', 3, 'dbg_foobar'),
             STEP, ('call', 1, 'dbg_foo'),
             NEXT, ('line', 2, 'dbg_foo'),
@@ -421,6 +459,7 @@ class RunningTestCase(SetMethodTestCase):
 
     def test_next_on_last_statement(self):
         self.send_expect = [
+            STEP, ('line', 2, 'dbg_foobar'),
             STEP, ('line', 3, 'dbg_foobar'),
             STEP, ('call', 1, 'dbg_foo'),
             break_lineno(10), ('line', 1, 'dbg_foo'),
@@ -432,6 +471,7 @@ class RunningTestCase(SetMethodTestCase):
 
     def test_next_in_calling_frame(self):
         self.send_expect = [
+            STEP, ('line', 2, 'dbg_foobar'),
             STEP, ('line', 3, 'dbg_foobar'),
             STEP, ('call', 1, 'dbg_foo'),
             UP, ('line', 3, 'dbg_foobar'),
@@ -486,6 +526,7 @@ class RunningTestCase(SetMethodTestCase):
 
     def test_return(self):
         self.send_expect = [
+            STEP, ('line', 2, 'dbg_foobar'),
             STEP, ('line', 3, 'dbg_foobar'),
             STEP, ('call', 1, 'dbg_foo'),
             STEP, ('line', 2, 'dbg_foo'),
@@ -497,6 +538,7 @@ class RunningTestCase(SetMethodTestCase):
 
     def test_return_in_calling_frame(self):
         self.send_expect = [
+            STEP, ('line', 2, 'dbg_foobar'),
             STEP, ('line', 3, 'dbg_foobar'),
             STEP, ('call', 1, 'dbg_foo'),
             UP, ('line', 3, 'dbg_foobar'),
@@ -551,6 +593,7 @@ class RunningTestCase(SetMethodTestCase):
 
     def test_until(self):
         self.send_expect = [
+            STEP, ('line', 2, 'dbg_foobar'),
             STEP, ('line', 3, 'dbg_foobar'),
             STEP, ('call', 1, 'dbg_foo'),
             STEP, ('line', 2, 'dbg_foo'),
@@ -570,6 +613,7 @@ class RunningTestCase(SetMethodTestCase):
 
     def test_until_in_calling_frame(self):
         self.send_expect = [
+            STEP, ('line', 2, 'dbg_foobar'),
             STEP, ('line', 3, 'dbg_foobar'),
             STEP, ('call', 1, 'dbg_foo'),
             UP, ('line', 3, 'dbg_foobar'),
@@ -629,6 +673,7 @@ class RunningTestCase(SetMethodTestCase):
             lno = 2
         """)
         self.send_expect = [
+            STEP, ('line', 2, 'dbg_module'),
             STEP, ('line', 3, 'dbg_module'),
             QUIT, (),
         ]
@@ -642,12 +687,20 @@ class RunningTestCase(SetMethodTestCase):
 
     def test_up(self):
         self.send_expect = [
+            STEP, ('line', 2, 'dbg_foobar'),
             STEP, ('line', 3, 'dbg_foobar'),
             STEP, ('call', 1, 'dbg_foo'),
             UP, ('line', 3, 'dbg_foobar'),
             QUIT, (),
         ]
         self.runcall(dbg_foobar)
+
+    def test_frame_is_oldest_frame(self):
+        # Check that the first frame is the oldest frame.
+        self.send_expect = [
+            UP, (),
+        ]
+        self.assertRaises(bdb.BdbError, self.runcall, dbg_foobar)
 
 class BreakpointTestCase(SetMethodTestCase):
     """Test the breakpoint set method."""
@@ -659,7 +712,7 @@ class BreakpointTestCase(SetMethodTestCase):
             lno = 3
         """)
         self.send_expect = [
-            break_lineno(2, TEST_MODULE), (None, 2, 'dbg_module'),
+            break_lineno(2, TEST_MODULE), (None, 1, 'dbg_module'),
             CONTINUE, ('line', 3, '<module>', ({1:1}, [])),
             QUIT, (),
         ]
@@ -858,7 +911,7 @@ class BreakpointTestCase(SetMethodTestCase):
         """)
         self.send_expect = [
             break_lineno(2, TEST_MODULE), (),
-            ignore(1), ('line', 2, 'dbg_module'),
+            ignore(1), ('line', 1, 'dbg_module'),
             CONTINUE, ('line', 3, 'foo', ({1:2}, [])),
             QUIT, (),
         ]
@@ -875,7 +928,7 @@ class BreakpointTestCase(SetMethodTestCase):
         self.send_expect = [
             break_lineno(2, TEST_MODULE), (),
             break_lineno(2, TEST_MODULE), (),
-            ignore(1), ('line', 2, 'dbg_module'),
+            ignore(1), ('line', 1, 'dbg_module'),
             disable(1), (),
             CONTINUE, ('line', 3, 'foo', ({2:1}, [])),
             enable(1), (),
@@ -997,6 +1050,108 @@ class BreakpointTestCase(SetMethodTestCase):
         ]
         self.assertRaises(bdb.BdbError, self.runcall, dbg_foobar)
 
+class RunTestCase(SetMethodTestCase):
+    """Test run, runeval and set_trace."""
+
+    def test_run_step(self):
+        # Check that bdb run method stops at the first line event and that bdb
+        # does not step into its own code on returning from the last frame.
+        statements = """
+            lno = 2
+        """
+        self.send_expect = [
+            STEP, ('return', 2, '<module>'),
+            STEP, (),
+        ]
+        self.bdb_run(statements)
+
+    def test_runeval_step(self):
+        # Check that bdb does not step into its own code on returning from the
+        # expression evaluated by runeval.
+        self.create_module("""
+            def foo():
+                lno = 3
+        """)
+        self.send_expect = [
+            STEP, ('call', 2, 'foo'),
+            STEP, ('line', 3, 'foo'),
+            STEP, ('return', 3, 'foo'),
+            STEP, ('return', 1, '<module>'),
+            STEP, (),
+        ]
+        import test_module
+        self.bdb_runeval('test_module.foo()', globals(), locals())
+
+    @unittest.skipIf(sys.platform == 'win32', 'a posix test')
+    def test_set_trace_step(self):
+        # Check that bdb does not step into its own code when handling SIGINT.
+        self.create_module("""
+            import os
+            import signal
+
+            pid = os.getpid()
+            os.kill(pid, signal.SIGINT)
+            lno = 7
+        """)
+        self.send_expect = [
+            break_lineno(3), (),
+            CONTINUE, ('line', 7, '<module>'),
+            STEP, ('return', 7, '<module>'),
+            CONTINUE, ('line', 3, 'dbg_module', ({1:1}, [])),
+            STEP, ('return', 3, 'dbg_module'),
+            STEP, (),
+        ]
+        self.set_sigint(True)
+        self.addCleanup(self.set_sigint, False)
+        self.runcall(dbg_module)
+
+    def test_run_frame_is_oldest_frame(self):
+        # Check that the first frame is the oldest frame.
+        statements = """
+            lno = 2
+        """
+        self.send_expect = [
+            UP, (),
+        ]
+        self.assertRaises(bdb.BdbError, self.bdb_run, statements)
+
+    def test_runeval_frame_is_oldest_frame(self):
+        # Check that the first frame is the oldest frame.
+        self.create_module("""
+            def foo():
+                lno = 3
+        """)
+        self.send_expect = [
+            STEP, ('call', 2, 'foo'),
+            UP, (),
+            UP, (),
+        ]
+        import test_module
+        self.assertRaises(bdb.BdbError, self.bdb_runeval,
+                            'test_module.foo()', globals(), locals())
+
+    @unittest.skipIf(sys.platform == 'win32', 'a posix test')
+    def test_set_trace_frame_is_oldest_frame(self):
+        # Check that the first frame is the oldest frame.
+        self.create_module("""
+            import os
+            import signal
+
+            pid = os.getpid()
+            os.kill(pid, signal.SIGINT)
+            lno = 7
+        """)
+        self.send_expect = [
+            break_lineno(3), (),
+            CONTINUE, ('line', 7, '<module>'),
+            STEP, ('return', 7, '<module>'),
+            CONTINUE, ('line', 3, 'dbg_module', ({1:1}, [])),
+            UP, (),
+        ]
+        self.set_sigint(True)
+        self.addCleanup(self.set_sigint, False)
+        self.assertRaises(bdb.BdbError, self.runcall, dbg_module)
+
 class IssueTestCase(SetMethodTestCase):
     """Test fixed issues."""
 
@@ -1028,6 +1183,7 @@ class IssueTestCase(SetMethodTestCase):
         # Set a breakpoint on a function from within that function and check
         # that the debugger does not stop in the function.
         self.send_expect = [
+            STEP, ('line', 2, 'dbg_foobar'),
             break_func('dbg_foobar'), (),
             CONTINUE, (),
         ]
@@ -1093,4 +1249,14 @@ class IssueTestCase(SetMethodTestCase):
             QUIT, (),
         ]
         self.runcall(dbg_module)
+
+    def test_issue_14743(self):
+        # Check that runcall stops at the call event and that bdb does not step
+        # into its own code on returning from the last frame.
+        self.send_expect = [
+            STEP, ('line', 2, 'dbg_bar'),
+            STEP, ('return', 2, 'dbg_bar'),
+            STEP, (),
+        ]
+        self.runcall(dbg_bar)
 

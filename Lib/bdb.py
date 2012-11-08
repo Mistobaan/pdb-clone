@@ -276,16 +276,18 @@ class Bdb:
         self.skip = set(skip) if skip else None
         # A dictionary mapping a filename to a ModuleBreakpoints instance.
         self.breakpoints = {}
+        self._reset()
 
         # Backward compatibility
     def canonic(self, filename):
         return canonic(filename)
 
-    def reset(self):
+    def _reset(self, ignore_first_call_event=True):
         linecache.checkcache()
+        self.ignore_first_call_event = ignore_first_call_event
         self.botframe = None
         self._curframe = None
-        self._set_stopinfo((None, 0))
+        self.set_step()
 
     def trace_dispatch(self, frame, event, arg):
         self._curframe = frame
@@ -320,16 +322,17 @@ class Bdb:
         return self.trace_dispatch
 
     def dispatch_call(self, frame, arg):
-        # XXX 'arg' is no longer used
+        # XXX 'arg' is no longer used.
         if self.botframe is None:
-            # First call of dispatch since reset()
-            self.botframe = frame.f_back # (CT) Note that this may also be None!
-            return self.trace_dispatch
+            self.botframe = frame
+            if self.ignore_first_call_event:
+                return self.trace_dispatch
         if not (self.stop_here(frame) or self.break_at_function(frame)):
-            # No need to trace this function
+            # No need to trace this function.
             return # None
-        self.user_call(frame, arg)
-        if self.quitting: raise BdbQuit
+        if self.stop_here(frame):
+            self.user_call(frame, arg)
+            if self.quitting: raise BdbQuit
         return self.trace_dispatch
 
     def dispatch_return(self, frame, arg):
@@ -338,8 +341,9 @@ class Bdb:
             if self.quitting: raise BdbQuit
             # Set the trace function in the caller when returning from the
             # current frame after step, next, until, return commands.
-            if (self.stopframe_lno == (None, 0) or
-                                    frame is self.stopframe_lno[0]):
+            if (frame is not self.botframe and
+                    (self.stopframe_lno == (None, 0) or
+                                    frame is self.stopframe_lno[0])):
                 if frame.f_back and not frame.f_back.f_trace:
                     frame.f_back.f_trace = self.trace_dispatch
                 self._set_stopinfo((None, 0))
@@ -472,11 +476,18 @@ class Bdb:
         """
         if frame is None:
             frame = sys._getframe().f_back
-        self.reset()
         frame.f_trace = self.trace_dispatch
+
+        # Do not change botframe when the debuggee has been started from an
+        # instance of Pdb with one of the family of run methods.
         while frame:
-            self.botframe = frame
+            if frame is self.botframe:
+                break
+            botframe = frame
             frame = frame.f_back
+        else:
+            self.botframe = botframe
+        self._curframe = None
         self.set_step()
         sys.settrace(self.trace_dispatch)
 
@@ -640,7 +651,7 @@ class Bdb:
             globals = __main__.__dict__
         if locals is None:
             locals = globals
-        self.reset()
+        self._reset()
         if isinstance(cmd, str):
             cmd = compile(cmd, "<string>", "exec")
         sys.settrace(self.trace_dispatch)
@@ -658,7 +669,7 @@ class Bdb:
             globals = __main__.__dict__
         if locals is None:
             locals = globals
-        self.reset()
+        self._reset()
         sys.settrace(self.trace_dispatch)
         try:
             return eval(expr, globals, locals)
@@ -675,7 +686,7 @@ class Bdb:
     # This method is more useful to debug a single function call.
 
     def runcall(self, func, *args, **kwds):
-        self.reset()
+        self._reset(False)
         sys.settrace(self.trace_dispatch)
         res = None
         try:
