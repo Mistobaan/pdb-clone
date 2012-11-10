@@ -282,17 +282,18 @@ class Bdb:
     def canonic(self, filename):
         return canonic(filename)
 
-    def _reset(self, ignore_first_call_event=True):
-        linecache.checkcache()
+    def _reset(self, ignore_first_call_event=True, botframe=None):
         self.ignore_first_call_event = ignore_first_call_event
-        self.botframe = None
+        self.botframe = botframe
+        self.quitting = False
         self._curframe = None
         self.set_step()
+        linecache.checkcache()
 
     def trace_dispatch(self, frame, event, arg):
         self._curframe = frame
-        if self.quitting:
-            return # None
+        if not self.botframe:
+            self.botframe = frame
         if event == 'line':
             return self.dispatch_line(frame)
         if event == 'call':
@@ -313,32 +314,36 @@ class Bdb:
     def dispatch_line(self, frame):
         if self.stop_here(frame):
             self.user_line(frame)
-            if self.quitting: raise BdbQuit
+            # Do not raise BdbQuit when debugging is started with set_trace.
+            if self.quitting and self.botframe.f_back:
+                raise BdbQuit
         else:
             breakpoint_hits = self.break_here(frame)
             if breakpoint_hits:
                 self.user_line(frame, breakpoint_hits)
-                if self.quitting: raise BdbQuit
+                if self.quitting and self.botframe.f_back:
+                    raise BdbQuit
         return self.trace_dispatch
 
     def dispatch_call(self, frame, arg):
         # XXX 'arg' is no longer used.
-        if self.botframe is None:
-            self.botframe = frame
-            if self.ignore_first_call_event:
-                return self.trace_dispatch
+        if self.ignore_first_call_event:
+            self.ignore_first_call_event = False
+            return self.trace_dispatch
         if not (self.stop_here(frame) or self.break_at_function(frame)):
             # No need to trace this function.
             return # None
         if self.stop_here(frame):
             self.user_call(frame, arg)
-            if self.quitting: raise BdbQuit
+            if self.quitting and self.botframe.f_back:
+                raise BdbQuit
         return self.trace_dispatch
 
     def dispatch_return(self, frame, arg):
         if self.stop_here(frame) or frame is self.stopframe_lno[0]:
             self.user_return(frame, arg)
-            if self.quitting: raise BdbQuit
+            if self.quitting and self.botframe.f_back:
+                raise BdbQuit
             # Set the trace function in the caller when returning from the
             # current frame after step, next, until, return commands.
             if (frame is not self.botframe and
@@ -352,7 +357,8 @@ class Bdb:
     def dispatch_exception(self, frame, arg):
         if self.stop_here(frame):
             self.user_exception(frame, arg)
-            if self.quitting: raise BdbQuit
+            if self.quitting and self.botframe.f_back:
+                raise BdbQuit
         return self.trace_dispatch
 
     # Normally derived classes don't override the following
@@ -445,7 +451,6 @@ class Bdb:
         if stopframe and not stopframe.f_trace:
             stopframe.f_trace = self.trace_dispatch
         self.stopframe_lno = stopframe, lineno
-        self.quitting = False
 
     # Derived classes and clients can call the following methods
     # to affect the stepping state.
@@ -474,12 +479,18 @@ class Bdb:
 
         If frame is not specified, debugging starts from caller's frame.
         """
-        if frame is None:
+        # First disable tracing temporarily as set_trace() may be called while
+        # tracing is in use. For example when called from a signal handler and
+        # within a debugging session started with runcall().
+        sys.settrace(None)
+
+        if not frame:
             frame = sys._getframe().f_back
         frame.f_trace = self.trace_dispatch
 
         # Do not change botframe when the debuggee has been started from an
         # instance of Pdb with one of the family of run methods.
+        self._reset(ignore_first_call_event=False, botframe=self.botframe)
         while frame:
             if frame is self.botframe:
                 break
@@ -487,25 +498,20 @@ class Bdb:
             frame = frame.f_back
         else:
             self.botframe = botframe
-        self._curframe = None
-        self.set_step()
         sys.settrace(self.trace_dispatch)
 
     def set_continue(self):
-        # Don't stop except at breakpoints or when finished
+        # Don't stop except at breakpoints or when finished.
         self._set_stopinfo((None, -1))
         if not self.has_breaks():
-            # no breakpoints; run without debugger overhead
+            # No breakpoints; run without debugger overhead.
             sys.settrace(None)
-            frame = sys._getframe().f_back
-            while frame and frame is not self.botframe:
-                del frame.f_trace
-                frame = frame.f_back
 
     def set_quit(self):
-        self.stopframe_lno = (None, -1)
-        self.returnframe = None
         self.quitting = True
+        # Stop tracing, the thread trace function 'c_tracefunc' is NULL and
+        # thus, call_trampoline() is not called anymore for all debug events:
+        # PyTrace_CALL, PyTrace_RETURN, PyTrace_EXCEPTION and PyTrace_LINE.
         sys.settrace(None)
 
     # Derived classes and clients can call the following methods
@@ -660,7 +666,6 @@ class Bdb:
         except BdbQuit:
             pass
         finally:
-            self.quitting = True
             sys.settrace(None)
 
     def runeval(self, expr, globals=None, locals=None):
@@ -676,7 +681,6 @@ class Bdb:
         except BdbQuit:
             pass
         finally:
-            self.quitting = True
             sys.settrace(None)
 
     def runctx(self, cmd, globals, locals):
@@ -686,7 +690,7 @@ class Bdb:
     # This method is more useful to debug a single function call.
 
     def runcall(self, func, *args, **kwds):
-        self._reset(False)
+        self._reset(ignore_first_call_event=False)
         sys.settrace(self.trace_dispatch)
         res = None
         try:
@@ -694,7 +698,6 @@ class Bdb:
         except BdbQuit:
             pass
         finally:
-            self.quitting = True
             sys.settrace(None)
         return res
 
