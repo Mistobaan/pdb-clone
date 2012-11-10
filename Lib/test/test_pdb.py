@@ -638,7 +638,6 @@ class PdbTestCase(unittest.TestCase):
             f.write(textwrap.dedent(script))
         self.addCleanup(support.unlink, filename)
         cmd = [sys.executable, '-m', 'pdb', filename]
-        stdout = stderr = None
         with subprocess.Popen(cmd, stdout=subprocess.PIPE,
                                    stdin=subprocess.PIPE,
                                    stderr=subprocess.PIPE,
