@@ -638,7 +638,6 @@ class PdbTestCase(unittest.TestCase):
             f.write(textwrap.dedent(script))
         self.addCleanup(support.unlink, filename)
         cmd = [sys.executable, '-m', 'pdb', filename]
-        stdout = stderr = None
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                                    stdin=subprocess.PIPE,
                                    stderr=subprocess.PIPE)
@@ -815,6 +814,43 @@ class PdbTestCase(unittest.TestCase):
             '\n\nExpected:\n{}\nGot:\n{}\n'
             'Fail to handle a syntax error in the debuggee.'
             .format(expected, stderr))
+
+    def test_issue_13044(self):
+        script = """
+            import pdb
+
+            pdb.set_trace()
+            a = 1
+            b = 2
+            sum = a + b
+        """
+        commands = """
+            step
+            step
+            step
+            step
+        """
+        # The error is not always the same:
+        # Python 2.7.2: Exception ImportError: 'No module named repr' in
+        # <function _remove at 0x7f7f51224938> ignored
+        # Python 2.7.1: Exception AttributeError: "'NoneType' object has no
+        # attribute 'path'" in <function _remove at 0xb73b6df4> ignored
+        error = 'Exception'
+        filename = 'main.py'
+        with open(filename, 'w') as f:
+            f.write(textwrap.dedent(script))
+        self.addCleanup(support.unlink, filename)
+        cmd = [sys.executable, filename]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                   stdin=subprocess.PIPE,
+                                   stderr=subprocess.PIPE)
+        stdout, stderr = proc.communicate(str.encode(commands))
+        stderr = stderr and normalize(bytes.decode(stderr))
+        error = normalize(error)
+        self.assertTrue(error not in stderr,
+            '\n\nError not expected:\n{}\nGot:\n{}\n'
+            'The debugger is still active while the interpreter shuts down.'
+            .format(error, stderr))
 
     def tearDown(self):
         support.unlink(support.TESTFN)
