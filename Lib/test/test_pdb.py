@@ -785,11 +785,36 @@ class PdbTestCase(unittest.TestCase):
         """
         filename = 'main.py'
         stdout, stderr = self.run_pdb(script, commands, filename)
-        stdout = normalize(normalize(stdout, 'handlers.py', strip_bp_lnum=True), filename)
+        stdout = normalize(normalize(
+                    stdout, 'handlers.py', strip_bp_lnum=True), filename)
         expected = normalize(expected, 'handlers.py', strip_bp_lnum=True)
         self.assertTrue(stdout in expected,
             '\n\nExpected:\n{}\nGot:\n{}\n'
-            'Fail to handle a breakpoint set by function name.'.format(expected, stdout))
+            'Fail to handle a breakpoint set by function name.'
+            .format(expected, stdout))
+
+    def test_issue_16180(self):
+        # A syntax error in the debuggee.
+        script = """
+            def foo:
+                pass
+
+            foo()
+        """
+        commands = ''
+        expected = """
+            File main.py", line 2
+            def foo:
+                   ^
+            SyntaxError: invalid syntax"""
+        filename = 'main.py'
+        stdout, stderr = self.run_pdb(script, commands, filename)
+        stderr = normalize(stderr, filename)
+        expected = normalize(expected)
+        self.assertTrue(expected in stderr,
+            '\n\nExpected:\n{}\nGot:\n{}\n'
+            'Fail to handle a syntax error in the debuggee.'
+            .format(expected, stderr))
 
     def tearDown(self):
         support.unlink(support.TESTFN)
