@@ -368,7 +368,7 @@ class SetMethodTestCase(unittest.TestCase):
                 'All send_expect sequences have not been processed.')
 
 class RunCallTestCase(SetMethodTestCase):
-    """Test step, next, return and until set methods."""
+    """Test step, next, return, until and quit set methods."""
 
     def test_step(self):
         self.send_expect = [
@@ -701,6 +701,13 @@ class RunCallTestCase(SetMethodTestCase):
             UP, (),
         ]
         self.assertRaises(bdb.BdbError, self.runcall, dbg_foobar)
+
+    def test_quit(self):
+        self.send_expect = [
+            STEP, ('line', 2, 'dbg_foobar'),
+            QUIT, (),
+        ]
+        self.runcall(dbg_foobar)
 
 class BreakpointTestCase(SetMethodTestCase):
     """Test the breakpoint set method."""
@@ -1065,6 +1072,20 @@ class RunTestCase(SetMethodTestCase):
         ]
         self.bdb_run(statements)
 
+    def test_run_step_into_a_function_and_get_call_event(self):
+        statements = """
+            def foo():
+                lno = 3
+
+            foo()
+        """
+        self.send_expect = [
+            STEP, ('line', 5, '<module>'),
+            STEP, ('call', 2, 'foo'),
+            QUIT, (),
+        ]
+        self.bdb_run(statements)
+
     def test_runeval_step(self):
         # Check that bdb does not step into its own code on returning from the
         # expression evaluated by runeval.
@@ -1151,6 +1172,30 @@ class RunTestCase(SetMethodTestCase):
         self.set_sigint(True)
         self.addCleanup(self.set_sigint, False)
         self.assertRaises(bdb.BdbError, self.runcall, dbg_module)
+
+    def test_run_quit(self):
+        statements = """
+            lno = 2
+            lno = 3
+        """
+        self.send_expect = [
+            STEP, ('line', 3, '<module>'),
+            QUIT, (),
+        ]
+        self.bdb_run(statements)
+
+    def test_runeval_quit(self):
+        self.create_module("""
+            def foo():
+                lno = 3
+        """)
+        self.send_expect = [
+            STEP, ('call', 2, 'foo'),
+            STEP, ('line', 3, 'foo'),
+            QUIT, (),
+        ]
+        import test_module
+        self.bdb_runeval('test_module.foo()', globals(), locals())
 
 class IssueTestCase(SetMethodTestCase):
     """Test fixed issues."""
@@ -1259,4 +1304,16 @@ class IssueTestCase(SetMethodTestCase):
             STEP, (),
         ]
         self.runcall(dbg_bar)
+
+    def test_issue_16446(self):
+        # The quit command ends the debugging session and the program continues
+        # its normal execution when the debugging session is started with
+        # set_trace.
+        self.send_expect = [
+            QUIT, (),
+        ]
+        bdb = BdbTest(self)
+        bdb.set_trace()
+        self.assertFalse(bdb.send_list,
+                'All send_expect sequences have not been processed.')
 
