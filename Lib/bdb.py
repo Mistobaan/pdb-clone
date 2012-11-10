@@ -352,6 +352,8 @@ class Bdb:
                 if frame.f_back and not frame.f_back.f_trace:
                     frame.f_back.f_trace = self.trace_dispatch
                 self._set_stopinfo((None, 0))
+        if frame is self.botframe:
+            sys.settrace(None)
         return self.trace_dispatch
 
     def dispatch_exception(self, frame, arg):
@@ -498,6 +500,9 @@ class Bdb:
             frame = frame.f_back
         else:
             self.botframe = botframe
+            # Must trace the bottom frame to disable tracing on termination,
+            # see issue 13044.
+            self.botframe.f_trace = self.trace_dispatch
         sys.settrace(self.trace_dispatch)
 
     def set_continue(self):
