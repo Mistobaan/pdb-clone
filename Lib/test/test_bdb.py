@@ -57,11 +57,13 @@ class BdbTest(bdb.Bdb):
         if sigint:
             self._previous_sigint_handler = \
                 signal.signal(signal.SIGINT, self.sigint_handler)
+        self.init_test()
 
+    def init_test(self):
         self.se_cnt = 0
-        self.send_list = list(islice(test_case.send_expect, 0, None, 2))
+        self.send_list = list(islice(self.test_case.send_expect, 0, None, 2))
         self.expct_list = list(islice(
-                chain([()], test_case.send_expect), 0, None, 2))
+                chain([()], self.test_case.send_expect), 0, None, 2))
 
     def sigint_handler(self, signum, frame):
         signal.signal(signal.SIGINT, self._previous_sigint_handler)
@@ -275,7 +277,7 @@ def dbg_bar():
     lno = 2
 
 class SetMethodTestCase(unittest.TestCase):
-    """ Test the Bdb set methods.
+    """Base class for all the tests.
 
     A send_expect item is defined as the two tuples:
 
@@ -309,6 +311,7 @@ class SetMethodTestCase(unittest.TestCase):
         unittest.TestCase.__init__(self, methodName)
         self.set_skip(None)
         self.set_sigint(False)
+        self.set_restart(False)
 
     def set_skip(self, skip):
         self.skip = skip
@@ -316,12 +319,16 @@ class SetMethodTestCase(unittest.TestCase):
     def set_sigint(self, sigint):
         self.sigint = sigint
 
+    def set_restart(self, restart):
+        self.restart = restart
+
     def setUp(self):
         # test_pdb does not reset Breakpoint class attributes on exit :-(
         _reset_Breakpoint()
 
         self.addCleanup(_reset_Breakpoint)
         self.addCleanup(sys.settrace, sys.gettrace())
+        self.addCleanup(bdb._module_finder.close)
 
     def create_module(self, statements, module_name=TEST_MODULE[:-3]):
         """Create a module holding 'statements' to be debugged."""
@@ -337,34 +344,64 @@ class SetMethodTestCase(unittest.TestCase):
         bdb._modules = {}
 
     def runcall(self, func, *args, **kwds):
-        bdb = BdbTest(self, skip=self.skip, sigint=self.sigint)
+        bdb_inst = BdbTest(self, skip=self.skip, sigint=self.sigint)
         try:
-            bdb.runcall(func, *args, **kwds)
+            if self.restart:
+                bdb_inst.restart()
+            bdb_inst.runcall(func, *args, **kwds)
         except self.failureException as err:
             # Do not show the BdbTest traceback when the test fails.
             raise self.failureException() from err
-        self.assertFalse(bdb.send_list,
+        self.assertFalse(bdb_inst.send_list,
                 'All send_expect sequences have not been processed.')
+        return bdb_inst
 
     def bdb_run(self, statements):
         self.create_module(statements)
-        bdb = BdbTest(self, skip=self.skip, sigint=self.sigint)
+        bdb_inst = BdbTest(self, skip=self.skip, sigint=self.sigint)
         try:
-            bdb.run(compile(textwrap.dedent(statements), TEST_MODULE, 'exec'))
+            bdb_inst.run(compile(textwrap.dedent(statements),
+                                            TEST_MODULE, 'exec'))
         except self.failureException as err:
             # Do not show the BdbTest traceback when the test fails.
             raise self.failureException() from err
-        self.assertFalse(bdb.send_list,
+        self.assertFalse(bdb_inst.send_list,
                 'All send_expect sequences have not been processed.')
 
     def bdb_runeval(self, expr, globals=None, locals=None):
-        bdb = BdbTest(self, skip=self.skip, sigint=self.sigint)
+        bdb_inst = BdbTest(self, skip=self.skip, sigint=self.sigint)
         try:
-            bdb.runeval(expr, globals, locals)
+            bdb_inst.runeval(expr, globals, locals)
         except self.failureException as err:
             # Do not show the BdbTest traceback when the test fails.
             raise self.failureException() from err
-        self.assertFalse(bdb.send_list,
+        self.assertFalse(bdb_inst.send_list,
+                'All send_expect sequences have not been processed.')
+
+    def restart_runcall(self, bdb_inst, new_statements, func, *args, **kwds):
+        with open(TEST_MODULE, 'w') as f:
+            f.write(textwrap.dedent(new_statements))
+        if hasattr(importlib, 'invalidate_caches'):
+            importlib.invalidate_caches()
+
+        # Initialize the test again.
+        bdb_inst.init_test()
+
+        bdb_inst.restart()
+        self.assertFalse('test_module' in sys.modules,
+                'test_module has not been removed from sys.modules.')
+
+        # We need to remove the compiled file because the timestamp
+        # of the latest test_module.py may be the same as the one
+        # from the previous run, due to the test being this fast.
+        support.forget('test_module')
+
+        try:
+            bdb_inst.runcall(dbg_module)
+        except self.failureException as err:
+            # Do not show the BdbTest traceback when the test fails.
+            raise self.failureException() from err
+        self.assertFalse(bdb_inst.send_list,
                 'All send_expect sequences have not been processed.')
 
 class RunCallTestCase(SetMethodTestCase):
@@ -1057,6 +1094,126 @@ class BreakpointTestCase(SetMethodTestCase):
         ]
         self.assertRaises(bdb.BdbError, self.runcall, dbg_foobar)
 
+    def test_restart_new_breakpoint(self):
+        # Set a breakpoint on a function, after source code changes and a
+        # restart.
+        self.create_module("""
+            def foo():
+                lno = 3
+
+            foo()
+        """)
+        self.send_expect = [
+            break_lineno(3, TEST_MODULE), (),
+            CONTINUE, ('line', 3, 'foo', ({1:1}, [])),
+            QUIT, (),
+        ]
+        self.set_restart(True)
+        self.addCleanup(self.set_restart, False)
+        bdb_inst = self.runcall(dbg_module)
+
+        # Restart the debugger with a changed test_module.
+        new_statements = """
+            def foo():
+                lno = 3
+                bar()
+
+            def bar():
+                lno = 7
+
+            foo()
+        """
+        self.send_expect = [
+            break_func('bar', TEST_MODULE), (),
+            CONTINUE, ('line', 3, 'foo', ({1:2}, [])),
+            CONTINUE, ('line', 7, 'bar', ({2:1}, [])),
+            QUIT, (),
+        ]
+        self.restart_runcall(bdb_inst, new_statements, dbg_module)
+
+    def test_restart_bp_after_last_line(self):
+        # A breakpoint is deleted on restart when its line number is greater
+        # than the new module line size.
+        self.create_module("""
+            def foo():
+                lno = 3
+
+            foo()
+        """)
+        self.send_expect = [
+            break_lineno(5, TEST_MODULE), (),
+            CONTINUE, ('line', 5, '<module>', ({1:1}, [])),
+            QUIT, (),
+        ]
+        self.set_restart(True)
+        self.addCleanup(self.set_restart, False)
+        bdb_inst = self.runcall(dbg_module)
+
+        # Restart the debugger with a changed test_module.
+        new_statements = """
+            def foo():
+                lno = 3
+            foo()
+        """
+        self.send_expect = [
+            CONTINUE, (),
+        ]
+        self.restart_runcall(bdb_inst, new_statements, dbg_module)
+
+    def test_restart_no_lines(self):
+        # Test the corner case where all lines are removed.
+        self.create_module("""
+            def foo():
+                lno = 3
+
+            foo()
+        """)
+        self.send_expect = [
+            break_lineno(3, TEST_MODULE), (),
+            CONTINUE, ('line', 3, 'foo', ({1:1}, [])),
+            QUIT, (),
+        ]
+        self.set_restart(True)
+        self.addCleanup(self.set_restart, False)
+        bdb_inst = self.runcall(dbg_module)
+
+        # Restart the debugger with a changed test_module.
+        new_statements = ""
+        self.send_expect = [
+            CONTINUE, (),
+        ]
+        self.restart_runcall(bdb_inst, new_statements, dbg_module)
+
+    def test_restart_syntax_error(self):
+        # Test the corner case where a syntax error in the changed code.
+        self.create_module("""
+            def foo():
+                lno = 3
+
+            foo()
+        """)
+        self.send_expect = [
+            break_lineno(3, TEST_MODULE), (),
+            CONTINUE, ('line', 3, 'foo', ({1:1}, [])),
+            QUIT, (),
+        ]
+        self.set_restart(True)
+        self.addCleanup(self.set_restart, False)
+        bdb_inst = self.runcall(dbg_module)
+
+        # Restart the debugger with a changed test_module.
+        new_statements = """
+            def foo()
+                lno = 3
+
+            foo()
+        """
+        self.send_expect = [
+            CONTINUE, (),
+        ]
+        self.assertRaises(bdb.BdbSyntaxError, self.restart_runcall,
+                                bdb_inst, new_statements, dbg_module)
+
 class RunTestCase(SetMethodTestCase):
     """Test run, runeval and set_trace."""
 
@@ -1289,7 +1446,7 @@ class IssueTestCase(SetMethodTestCase):
         self.send_expect = [
             break_func('foo_2', 'test_module_2.py'), (),
             CONTINUE, ('line', 3, 'foo_2', ({1:1}, [])),
-            break_lineno(5, 'test_module.py'), (),
+            break_lineno(5, TEST_MODULE), (),
             CONTINUE, ('line', 5, 'foo', ({2:1}, [])),
             QUIT, (),
         ]
@@ -1312,8 +1469,48 @@ class IssueTestCase(SetMethodTestCase):
         self.send_expect = [
             QUIT, (),
         ]
-        bdb = BdbTest(self)
-        bdb.set_trace()
-        self.assertFalse(bdb.send_list,
+        bdb_inst = BdbTest(self)
+        bdb_inst.set_trace()
+        self.assertFalse(bdb_inst.send_list,
                 'All send_expect sequences have not been processed.')
+
+    def test_issue_14912(self):
+        # Stop at a breakpoint after source code changes and a restart.
+        self.create_module("""
+            def foo():
+                lno = 3
+                lno = 4
+
+            foo()
+        """)
+        self.send_expect = [
+            break_func('foo', TEST_MODULE), (),
+            break_lineno(4, TEST_MODULE), (),
+            CONTINUE, ('line', 3, 'foo', ({1:1}, [])),
+            CONTINUE, ('line', 4, 'foo', ({2:1}, [])),
+            # Make sure test_module is imported so that we may test
+            # later that it is removed by _module_finder on restart.
+            CONTINUE, (),
+        ]
+        self.set_restart(True)
+        self.addCleanup(self.set_restart, False)
+        bdb_inst = self.runcall(dbg_module)
+
+        # Restart the debugger with a changed test_module.
+        new_statements = """
+            def bar():
+                lno = 3
+
+            def foo():
+                lno = 6
+                bar()
+
+            foo()
+        """
+        self.send_expect = [
+            CONTINUE, ('line', 6, 'foo', ({2:2}, [])),
+            CONTINUE, ('line', 3, 'bar', ({1:2}, [])),
+            QUIT, (),
+        ]
+        self.restart_runcall(bdb_inst, new_statements, dbg_module)
 
