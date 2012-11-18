@@ -1625,6 +1625,7 @@ def main():
     pdb.rcLines.extend(commands)
     while True:
         try:
+            pdb.restart()
             pdb._runscript(mainpyfile)
             if pdb._user_requested_quit:
                 break
@@ -1636,7 +1637,7 @@ def main():
             # In most cases SystemExit does not warrant a post-mortem session.
             print("The program exited via sys.exit(). Exit status:", end=' ')
             print(sys.exc_info()[1])
-        except SyntaxError:
+        except (SyntaxError, bdb.BdbSyntaxError):
             traceback.print_exc()
             break
         except:

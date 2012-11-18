@@ -13,9 +13,58 @@ from operator import attrgetter
 
 __all__ = ["BdbQuit", "Bdb", "Breakpoint"]
 
+class ModuleFinder(list):
+    """A list of the parent module names imported by the debuggee."""
+
+    PATH_ENTRY = 'pdb_module_finder'
+
+    def __init__(self):
+        self.hooked = False
+
+    def __call__(self, path_entry):
+        if path_entry != self.PATH_ENTRY:
+            raise ImportError()
+        return self
+
+    def find_module(self, fullname, path=None):
+        self.append(fullname)
+        return None
+
+    def reset(self):
+        """Remove from sys.modules the modules imported by the debuggee."""
+        if not self.hooked:
+            self.hooked = True
+            sys.path_hooks.append(self)
+            sys.path.insert(0, self.PATH_ENTRY)
+            return
+
+        for modname in self:
+            if modname in sys.modules:
+                del sys.modules[modname]
+                submods = []
+                for subm in sys.modules:
+                    if subm.startswith(modname + '.'):
+                        submods.append(subm)
+                # All submodules of modname may not have been imported by the
+                # debuggee, but they are still removed from sys.modules as
+                # there is no way to distinguish them.
+                for subm in submods:
+                    del sys.modules[subm]
+        self[:] = []
+
+    def close(self):
+        self.hooked = False
+        if self in sys.path_hooks:
+            sys.path_hooks.remove(self)
+        if self.PATH_ENTRY in sys.path:
+            sys.path.remove(self.PATH_ENTRY)
+        if self.PATH_ENTRY in sys.path_importer_cache:
+            del sys.path_importer_cache[self.PATH_ENTRY]
+
 # A dictionary mapping a filename to a BdbModule instance.
 _modules = {}
 _fncache = {}
+_module_finder = ModuleFinder()
 
 def canonic(filename):
     if filename == "<" + filename[1:-1] + ">":
@@ -52,10 +101,19 @@ def reiterate(it):
             yield item
             val = (yield item)
 
-class BdbError(Exception):
-    """Generic bdb exception."""
+class BdbException(Exception):
+    """A bdb exception."""
 
-class BdbQuit(Exception):
+class BdbError(BdbException):
+    """A bdb error."""
+
+class BdbSourceError(BdbError):
+    """An error related to the debuggee source code."""
+
+class BdbSyntaxError(BdbError):
+    """A syntax error in the debuggee source code."""
+
+class BdbQuit(BdbException):
     """Exception to give up completely."""
 
 class BdbModule:
@@ -68,14 +126,31 @@ class BdbModule:
 
     def __init__(self, filename):
         self.filename = filename
-        self.functions_firstlno = None
-        self.source_lines = linecache.getlines(filename)
-        if not self.source_lines:
-            raise BdbError('No lines in {}.'.format(filename))
-        try:
-            self.code = compile(''.join(self.source_lines), filename, 'exec')
-        except (SyntaxError, TypeError) as err:
-            raise BdbError('{}: {}.'.format(filename, err))
+        self.linecache = None
+        self.reset()
+
+    def reset(self):
+        if (self.filename not in linecache.cache or
+                id(linecache.cache[self.filename]) != id(self.linecache)):
+            self.functions_firstlno = None
+            self.code = None
+            self.source_lines = linecache.getlines(self.filename)
+            if not self.source_lines:
+                raise BdbSourceError('No lines in {}.'.format(self.filename))
+            try:
+                self.code = compile(''.join(self.source_lines),
+                                                self.filename, 'exec')
+            except (SyntaxError, TypeError) as err:
+                raise BdbSyntaxError('{}: {}.'.format(self.filename, err))
+            # At this point we still need to test for self.filename in
+            # linecache.cache because of doctest scripts, as doctest installs a
+            # hook at linecache.getlines to allow <doctest name> to be
+            # linecache readable. But the condition is always true for real
+            # filenames.
+            if self.filename in linecache.cache:
+                self.linecache = linecache.cache[self.filename]
+            return True
+        return False
 
     def get_func_lno(self, funcname):
         """The first line number of the last defined 'funcname' function."""
@@ -86,7 +161,7 @@ class BdbModule:
         try:
             return self.functions_firstlno[funcname]
         except KeyError:
-            raise BdbError('{}: function "{}" not found.'.format(
+            raise BdbSourceError('{}: function "{}" not found.'.format(
                 self.filename, funcname))
 
     def get_actual_bp(self, lineno):
@@ -143,9 +218,10 @@ class BdbModule:
                 # statement of the subcode following lineno (recursively).
                 return _distance(subcodes[actual_lno])
 
-        code_dist = _distance(self.code, module_level=True)
-        if not code_dist:
-            raise BdbError('{}: line {} is after the last '
+        if self.code:
+            code_dist = _distance(self.code, module_level=True)
+        if not self.code or not code_dist:
+            raise BdbSourceError('{}: line {} is after the last '
                 'valid statement.'.format(self.filename, lineno))
         return code_dist[1]
 
@@ -204,6 +280,20 @@ class ModuleBreakpoints:
         self.bdb_module = _modules[filename]
         self.breakpts = {}
 
+    def reset(self):
+        try:
+            do_reset = self.bdb_module.reset()
+        except BdbSourceError:
+            do_reset = True
+        if do_reset:
+            bplist = self.all_breakpoints()
+            self.breakpts = {}
+            for bp in bplist:
+                try:
+                    bp.actual_bp = self.add_breakpoint(bp)
+                except BdbSourceError:
+                    bp.deleteMe()
+
     def add_breakpoint(self, bp):
         firstlineno, actual_lno = self.bdb_module.get_actual_bp(bp.line)
         if firstlineno not in self.breakpts:
@@ -221,8 +311,9 @@ class ModuleBreakpoints:
             bplist = line_bps[actual_lno]
             bplist.remove(bp)
         except (KeyError, ValueError):
-            assert False, ('Internal error: bpbynumber and breakpts'
-                            ' are inconsistent')
+            # This may occur after a reset and the breakpoint could not be
+            # added anymore.
+            return
         if not bplist:
             del line_bps[actual_lno]
         if not line_bps:
@@ -232,7 +323,7 @@ class ModuleBreakpoints:
         """Return the list of breakpoints set at lineno."""
         try:
             firstlineno, actual_lno = self.bdb_module.get_actual_bp(lineno)
-        except BdbError:
+        except BdbSourceError:
             return []
         if firstlineno not in self.breakpts:
             return []
@@ -277,6 +368,8 @@ class Bdb:
         # A dictionary mapping a filename to a ModuleBreakpoints instance.
         self.breakpoints = {}
         self._reset()
+        self.skip_calls = (ModuleFinder.__call__.__code__,
+                           ModuleFinder.find_module.__code__)
 
         # Backward compatibility
     def canonic(self, filename):
@@ -288,7 +381,13 @@ class Bdb:
         self.quitting = False
         self._curframe = None
         self.set_step()
+
+    def restart(self):
+        """Restart the debugger after source code changes."""
+        _module_finder.reset()
         linecache.checkcache()
+        for module_bpts in self.breakpoints.values():
+            module_bpts.reset()
 
     def trace_dispatch(self, frame, event, arg):
         self._curframe = frame
@@ -330,6 +429,8 @@ class Bdb:
         if self.ignore_first_call_event:
             self.ignore_first_call_event = False
             return self.trace_dispatch
+        if frame.f_code in self.skip_calls:
+            return # None
         if not (self.stop_here(frame) or self.break_at_function(frame)):
             # No need to trace this function.
             return # None
