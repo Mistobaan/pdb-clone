@@ -1514,3 +1514,23 @@ class IssueTestCase(SetMethodTestCase):
         ]
         self.restart_runcall(bdb_inst, new_statements, dbg_module)
 
+    def test_issue_16482(self):
+        # Check the frame line number after a 'continue' command while no
+        # breakpoints are set.
+        self.create_module("""
+            import sys
+
+            f = sys._getframe()
+            # The test is pass when we raise ValueError.
+            if f.f_lineno == 6:
+                raise ValueError
+        """)
+        self.send_expect = [
+            STEP, ('line', 2, 'dbg_module'),
+            STEP, ('call', 2, '<module>'),
+            CONTINUE, (),
+        ]
+        self.set_skip(('importlib*', '_abcoll', 'os'))
+        self.addCleanup(self.set_skip, None)
+        self.assertRaises(ValueError, self.runcall, dbg_module)
+

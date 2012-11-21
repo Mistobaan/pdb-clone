@@ -413,15 +413,12 @@ class Bdb:
     def dispatch_line(self, frame):
         if self.stop_here(frame):
             self.user_line(frame)
-            # Do not raise BdbQuit when debugging is started with set_trace.
-            if self.quitting and self.botframe.f_back:
-                raise BdbQuit
+            return self._get_trace_function()
         else:
             breakpoint_hits = self.break_here(frame)
             if breakpoint_hits:
                 self.user_line(frame, breakpoint_hits)
-                if self.quitting and self.botframe.f_back:
-                    raise BdbQuit
+                return self._get_trace_function()
         return self.trace_dispatch
 
     def dispatch_call(self, frame, arg):
@@ -436,15 +433,14 @@ class Bdb:
             return # None
         if self.stop_here(frame):
             self.user_call(frame, arg)
-            if self.quitting and self.botframe.f_back:
-                raise BdbQuit
+            return self._get_trace_function()
         return self.trace_dispatch
 
     def dispatch_return(self, frame, arg):
         if self.stop_here(frame) or frame is self.stopframe_lno[0]:
             self.user_return(frame, arg)
-            if self.quitting and self.botframe.f_back:
-                raise BdbQuit
+            if not self._get_trace_function():
+                return None
             # Set the trace function in the caller when returning from the
             # current frame after step, next, until, return commands.
             if (frame is not self.botframe and
@@ -454,14 +450,14 @@ class Bdb:
                     frame.f_back.f_trace = self.trace_dispatch
                 self._set_stopinfo((None, 0))
         if frame is self.botframe:
-            sys.settrace(None)
+            self._stop_tracing()
+            return None
         return self.trace_dispatch
 
     def dispatch_exception(self, frame, arg):
         if self.stop_here(frame):
             self.user_exception(frame, arg)
-            if self.quitting and self.botframe.f_back:
-                raise BdbQuit
+            return self._get_trace_function()
         return self.trace_dispatch
 
     # Normally derived classes don't override the following
@@ -606,19 +602,41 @@ class Bdb:
             self.botframe.f_trace = self.trace_dispatch
         sys.settrace(self.trace_dispatch)
 
+    def _get_trace_function(self):
+        # Do not raise BdbQuit when debugging is started with set_trace.
+        if self.quitting and self.botframe.f_back:
+            raise BdbQuit
+        # Do not re-install the local trace when we are finished debugging, see
+        # issues 16482 and 7238.
+        if not sys.gettrace():
+            return None
+        return self.trace_dispatch
+
+    def _stop_tracing(self):
+        # Stop tracing, the thread trace function 'c_tracefunc' is NULL and
+        # thus, call_trampoline() is not called anymore for all debug events:
+        # PyTrace_CALL, PyTrace_RETURN, PyTrace_EXCEPTION and PyTrace_LINE.
+        sys.settrace(None)
+
+        # See PyFrame_GetLineNumber() in Objects/frameobject.c for why the
+        # local trace functions must be deleted.
+        frame = self._curframe
+        while frame:
+            del frame.f_trace
+            if frame is self.botframe:
+                break
+            frame = frame.f_back
+
     def set_continue(self):
         # Don't stop except at breakpoints or when finished.
         self._set_stopinfo((None, -1))
         if not self.has_breaks():
             # No breakpoints; run without debugger overhead.
-            sys.settrace(None)
+            self._stop_tracing()
 
     def set_quit(self):
         self.quitting = True
-        # Stop tracing, the thread trace function 'c_tracefunc' is NULL and
-        # thus, call_trampoline() is not called anymore for all debug events:
-        # PyTrace_CALL, PyTrace_RETURN, PyTrace_EXCEPTION and PyTrace_LINE.
-        sys.settrace(None)
+        self._stop_tracing()
 
     # Derived classes and clients can call the following methods
     # to manipulate breakpoints.  These methods return an
