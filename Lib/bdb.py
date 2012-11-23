@@ -379,7 +379,7 @@ class Bdb:
         self.ignore_first_call_event = ignore_first_call_event
         self.botframe = botframe
         self.quitting = False
-        self._curframe = None
+        self.topframe = None
         self.set_step()
 
     def restart(self):
@@ -390,9 +390,6 @@ class Bdb:
             module_bpts.reset()
 
     def trace_dispatch(self, frame, event, arg):
-        self._curframe = frame
-        if not self.botframe:
-            self.botframe = frame
         if event == 'line':
             return self.dispatch_line(frame)
         if event == 'call':
@@ -412,12 +409,12 @@ class Bdb:
 
     def dispatch_line(self, frame):
         if self.stop_here(frame):
-            self.user_line(frame)
+            self._user_method(frame, 'line')
             return self._get_trace_function()
         else:
             breakpoint_hits = self.break_here(frame)
             if breakpoint_hits:
-                self.user_line(frame, breakpoint_hits)
+                self._user_method(frame, 'line', breakpoint_hits)
                 return self._get_trace_function()
         return self.trace_dispatch
 
@@ -432,13 +429,13 @@ class Bdb:
             # No need to trace this function.
             return # None
         if self.stop_here(frame):
-            self.user_call(frame, arg)
+            self._user_method(frame, 'call', arg)
             return self._get_trace_function()
         return self.trace_dispatch
 
     def dispatch_return(self, frame, arg):
         if self.stop_here(frame) or frame is self.stopframe_lno[0]:
-            self.user_return(frame, arg)
+            self._user_method(frame, 'return', arg)
             if not self._get_trace_function():
                 return None
             # Set the trace function in the caller when returning from the
@@ -456,9 +453,32 @@ class Bdb:
 
     def dispatch_exception(self, frame, arg):
         if self.stop_here(frame):
-            self.user_exception(frame, arg)
+            self._user_method(frame, 'exception', arg)
             return self._get_trace_function()
         return self.trace_dispatch
+
+    def get_locals(self, frame):
+        # The f_locals dictionary of the top level frame is cached to avoid
+        # being overwritten by invocation of its getter frame_getlocals (see
+        # frameobject.c).
+        if frame is self.topframe:
+            if not self.topframe_locals:
+                self.topframe_locals = self.topframe.f_locals
+            return self.topframe_locals
+        # Get the f_locals dictionary and thus explicitly overwrite the
+        # previous changes made by the user to locals in this frame (see issue
+        # 9633).
+        return frame.f_locals
+
+    def _user_method(self, frame, event, *args, **kwds):
+        if not self.botframe:
+            self.botframe = frame
+        self.topframe = frame
+        self.topframe_locals = None
+        method = getattr(self, 'user_' + event)
+        method(frame, *args, **kwds)
+        self.topframe = None
+        self.topframe_locals = None
 
     # Normally derived classes don't override the following
     # methods, but they may if they want to redefine the
@@ -539,9 +559,9 @@ class Bdb:
 
     def _set_stopinfo(self, stopframe_lno):
         # Ensure that stopframe belongs to the stack frame in the interval
-        # [self.botframe, self._curframe] and that it gets a trace function.
+        # [self.botframe, self.topframe] and that it gets a trace function.
         stopframe, lineno = stopframe_lno
-        frame = self._curframe
+        frame = self.topframe
         while stopframe and frame and frame is not stopframe:
             if frame is self.botframe:
                 stopframe = self.botframe
@@ -620,7 +640,7 @@ class Bdb:
 
         # See PyFrame_GetLineNumber() in Objects/frameobject.c for why the
         # local trace functions must be deleted.
-        frame = self._curframe
+        frame = self.topframe
         while frame:
             del frame.f_trace
             if frame is self.botframe:
@@ -660,7 +680,7 @@ class Bdb:
         # Set the trace function when the breakpoint is set in one of the
         # frames of the frame stack.
         firstlineno, actual_lno = bp.actual_bp
-        frame = self._curframe
+        frame = self.topframe
         while frame:
             if (filename == frame.f_code.co_filename and
                         firstlineno == frame.f_code.co_firstlineno):
@@ -754,16 +774,17 @@ class Bdb:
             s += frame.f_code.co_name
         else:
             s += "<lambda>"
-        if '__args__' in frame.f_locals:
-            args = frame.f_locals['__args__']
+        locals = self.get_locals(frame)
+        if '__args__' in locals:
+            args = locals['__args__']
         else:
             args = None
         if args:
             s += reprlib.repr(args)
         else:
             s += '()'
-        if '__return__' in frame.f_locals:
-            rv = frame.f_locals['__return__']
+        if '__return__' in locals:
+            rv = locals['__return__']
             s += '->'
             s += reprlib.repr(rv)
         line = linecache.getline(filename, lineno, frame.f_globals)
