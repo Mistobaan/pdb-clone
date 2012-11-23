@@ -110,11 +110,14 @@ def find_function(funcname, filename):
     fp.close()
     return answer
 
-def getsourcelines(obj):
+def getsourcelines(obj, locals=None):
     lines, lineno = inspect.findsource(obj)
-    if inspect.isframe(obj) and obj.f_globals is obj.f_locals:
-        # must be a module frame: do not try to cut a block out of it
-        return lines, 1
+    if inspect.isframe(obj):
+        if not locals:
+            locals = obj.f_locals
+        if obj.f_globals is locals:
+            # Must be a module frame: do not try to cut a block out of it.
+            return lines, 1
     elif inspect.ismodule(obj):
         return lines, 1
     return inspect.getblock(lines[lineno:]), lineno+1
@@ -295,10 +298,6 @@ class Pdb(bdb.Bdb, cmd.Cmd):
             self.tb_lineno[tb.tb_frame] = lineno
             tb = tb.tb_next
         self.curframe = self.stack[self.curindex][0]
-        # The f_locals dictionary is updated from the actual frame
-        # locals whenever the .f_locals accessor is called, so we
-        # cache it here to ensure that modifications are not overwritten.
-        self.curframe_locals = self.curframe.f_locals
         return self.execRcLines()
 
     # Can be executed earlier than 'setup' if desired
@@ -431,7 +430,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
 
     def default(self, line):
         if line[:1] == '!': line = line[1:]
-        locals = self.curframe_locals
+        locals = self.get_locals(self.curframe)
         globals = self.curframe.f_globals
         try:
             code = compile(line + '\n', '<stdin>', 'single')
@@ -561,7 +560,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         # complete builtins, and they clutter the namespace quite heavily, so we
         # leave them out.
         ns = self.curframe.f_globals.copy()
-        ns.update(self.curframe_locals)
+        ns.update(self.get_locals(self.curframe))
         if '.' in text:
             # Walk an attribute chain up to the last part, similar to what
             # rlcompleter does.  This will bail if any of the parts are not
@@ -922,7 +921,6 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         assert 0 <= number < len(self.stack)
         self.curindex = number
         self.curframe = self.stack[self.curindex][0]
-        self.curframe_locals = self.curframe.f_locals
         self.print_stack_entry(self.stack[self.curindex])
         self.lineno = None
 
@@ -1082,7 +1080,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         """
         sys.settrace(None)
         globals = self.curframe.f_globals
-        locals = self.curframe_locals
+        locals = self.get_locals(self.curframe)
         p = Pdb(self.completekey, self.stdin, self.stdout)
         p.prompt = "(%s) " % self.prompt.strip()
         self.message("ENTERING RECURSIVE DEBUGGER")
@@ -1118,7 +1116,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         Print the argument list of the current function.
         """
         co = self.curframe.f_code
-        dict = self.curframe_locals
+        dict = self.get_locals(self.curframe)
         n = co.co_argcount
         if co.co_flags & 4: n = n+1
         if co.co_flags & 8: n = n+1
@@ -1134,15 +1132,17 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         """retval
         Print the return value for the last return of a function.
         """
-        if '__return__' in self.curframe_locals:
-            self.message(repr(self.curframe_locals['__return__']))
+        locals = self.get_locals(self.curframe)
+        if '__return__' in locals:
+            self.message(repr(locals['__return__']))
         else:
             self.error('Not yet returned!')
     do_rv = do_retval
 
     def _getval(self, arg):
         try:
-            return eval(arg, self.curframe.f_globals, self.curframe_locals)
+            return eval(arg, self.curframe.f_globals,
+                            self.get_locals(self.curframe))
         except:
             exc_info = sys.exc_info()[:2]
             self.error(traceback.format_exception_only(*exc_info)[-1].strip())
@@ -1151,7 +1151,8 @@ class Pdb(bdb.Bdb, cmd.Cmd):
     def _getval_except(self, arg, frame=None):
         try:
             if frame is None:
-                return eval(arg, self.curframe.f_globals, self.curframe_locals)
+                return eval(arg, self.curframe.f_globals,
+                                self.get_locals(self.curframe))
             else:
                 return eval(arg, frame.f_globals, frame.f_locals)
         except:
@@ -1241,7 +1242,8 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         filename = self.curframe.f_code.co_filename
         breaklist = self.get_file_breaks(filename)
         try:
-            lines, lineno = getsourcelines(self.curframe)
+            lines, lineno = getsourcelines(self.curframe,
+                                self.get_locals(self.curframe))
         except IOError as err:
             self.error(err)
             return
@@ -1257,7 +1259,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         except:
             return
         try:
-            lines, lineno = getsourcelines(obj)
+            lines, lineno = getsourcelines(obj, self.get_locals(self.curframe))
         except (IOError, TypeError) as err:
             self.error(err)
             return
@@ -1366,7 +1368,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         contains all the (global and local) names found in the current scope.
         """
         ns = self.curframe.f_globals.copy()
-        ns.update(self.curframe_locals)
+        ns.update(self.get_locals(self.curframe))
         code.interact("*interactive*", local=ns)
 
     def do_alias(self, arg):
