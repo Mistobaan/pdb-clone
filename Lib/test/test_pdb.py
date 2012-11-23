@@ -604,6 +604,62 @@ def test_pdb_run_with_code_object():
     """
 
 
+def test_pdb_set_frame_locals():
+    """This tests setting local variables.
+
+    >>> def foo(n):
+    ...     x = n
+    ...     bar(x)
+    >>> def bar(n):
+    ...     y = n + 1
+    ...     from pdb_clone import pdb; pdb.Pdb().set_trace()
+    ...     z = y
+
+    >>> with PdbTestInput([
+    ...     'y',
+    ...     '!y = 42',
+    ...     'y',
+    ...     'up',
+    ...     'x',
+    ...     '!x = 55',
+    ...     'x',
+    ...     'down',
+    ...     'y',
+    ...     'step',
+    ...     'y',
+    ...     'continue'
+    ... ]):
+    ...      foo(1)
+    > <doctest test.test_pdb.test_pdb_set_frame_locals[1]>(4)bar()
+    -> z = y
+    (Pdb) y
+    2
+    (Pdb) !y = 42
+    (Pdb) y
+    42
+    (Pdb) up
+    > <doctest test.test_pdb.test_pdb_set_frame_locals[0]>(3)foo()
+    -> bar(x)
+    (Pdb) x
+    1
+    (Pdb) !x = 55
+    (Pdb) x
+    1
+    (Pdb) down
+    > <doctest test.test_pdb.test_pdb_set_frame_locals[1]>(4)bar()
+    -> z = y
+    (Pdb) y
+    42
+    (Pdb) step
+    --Return--
+    > <doctest test.test_pdb.test_pdb_set_frame_locals[1]>(4)bar()->None
+    -> z = y
+    (Pdb) y
+    42
+    (Pdb) continue
+    """
+
+
 def normalize(result, filename='', strip_bp_lnum=False):
     """Normalize a test result."""
     lines = []
