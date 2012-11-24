@@ -123,7 +123,7 @@ distutils.core.setup(
 
     # meta-data
     name='pdb-clone',
-    version='1.0.py2',
+    version='1.1.py2',
     description=DESCRIPTION,
     long_description=DESCRIPTION,
     platforms='all',
