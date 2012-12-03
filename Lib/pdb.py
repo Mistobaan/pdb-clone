@@ -77,7 +77,6 @@ import glob
 import pprint
 import signal
 import inspect
-import importlib
 import imp
 import traceback
 import linecache
@@ -135,7 +134,7 @@ def get_module_fname(module_name, path=None, inpackage=None):
         return getattr(sys.modules[module_name], '__file__', None)
 
     if inpackage is not None:
-        fullmodule = '{}.{}'.format(inpackage, module_name)
+        fullmodule = '%s.%s' % (inpackage, module_name)
     else:
         fullmodule = module_name
 
@@ -147,34 +146,22 @@ def get_module_fname(module_name, path=None, inpackage=None):
         if not parent:
             return None
         if inpackage is not None:
-            package = '{}.{}'.format(inpackage, package)
+            package = '%s.%s' % (inpackage, package)
         return get_module_fname(submodule, [os.path.dirname(parent)], package)
 
     if inpackage is not None:
         search_path = path
     else:
         search_path = sys.path
-    if hasattr(importlib, 'find_loader'):
-        try:
-            loader = importlib.find_loader(fullmodule, search_path)
-            if not loader:
-                return None
-        except (ImportError, ValueError):
-            return None
-        try:
-            return loader.get_filename(fullmodule)
-        except AttributeError:
-            return None
-    else:
-        try:
-            f, fname, (s, m, t) = imp.find_module(module_name, search_path)
+    try:
+        f, fname, (s, m, t) = imp.find_module(module_name, search_path)
+        if f: f.close()
+        if t == imp.PKG_DIRECTORY:
+            f, fname, desc = imp.find_module('__init__', [fname])
             if f: f.close()
-            if t == imp.PKG_DIRECTORY:
-                f, fname, desc = imp.find_module('__init__', [fname])
-                if f: f.close()
-            return fname
-        except ImportError:
-            return None
+        return fname
+    except ImportError:
+        return None
 
 def source_filename(filename):
     if filename:
@@ -197,7 +184,7 @@ def get_fqn_fname(fqn, frame):
         if frame_fname:
             candidate_tuples.append((fqn, frame_fname))
         names = fqn.split('.')
-        for i in range(len(names) - 1, 0, -1):
+        for i in xrange(len(names) - 1, 0, -1):
             filename = source_filename(get_module_fname('.'.join(names[:i])))
             if filename:
                 candidate_tuples.append(('.'.join(names[i:]), filename))
@@ -252,13 +239,23 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         if 'HOME' in os.environ:
             envHome = os.environ['HOME']
             try:
-                with open(os.path.join(envHome, ".pdbrc")) as rcFile:
+                rcFile = None
+                try:
+                    rcFile = open(os.path.join(envHome, ".pdbrc"))
                     self.rcLines.extend(rcFile)
+                finally:
+                    if rcFile:
+                        rcFile.close()
             except IOError:
                 pass
         try:
-            with open(".pdbrc") as rcFile:
+            rcFile = None
+            try:
+                rcFile = open(".pdbrc")
                 self.rcLines.extend(rcFile)
+            finally:
+                if rcFile:
+                    rcFile.close()
         except IOError:
             pass
 
@@ -643,18 +640,19 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         self.prompt = '(com) '
         self.commands_defining = True
         try:
-            self.cmdloop()
-        except KeyboardInterrupt:
-            # Restore old definitions.
-            if old_command_defs:
-                self.commands[bnum] = old_command_defs[0]
-                self.commands_doprompt[bnum] = old_command_defs[1]
-                self.commands_silent[bnum] = old_command_defs[2]
-            else:
-                del self.commands[bnum]
-                del self.commands_doprompt[bnum]
-                del self.commands_silent[bnum]
-            self.error('command definition aborted, old commands restored')
+            try:
+                self.cmdloop()
+            except KeyboardInterrupt:
+                # Restore old definitions.
+                if old_command_defs:
+                    self.commands[bnum] = old_command_defs[0]
+                    self.commands_doprompt[bnum] = old_command_defs[1]
+                    self.commands_silent[bnum] = old_command_defs[2]
+                else:
+                    del self.commands[bnum]
+                    del self.commands_doprompt[bnum]
+                    del self.commands_silent[bnum]
+                self.error('command definition aborted, old commands restored')
         finally:
             self.commands_defining = False
             self.prompt = prompt_back
@@ -687,16 +685,20 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         # Parse arguments, comma has lowest precedence and cannot occur in
         # filename.
         args = arg.rsplit(',', 1)
-        cond =  args[1].strip() if len(args) == 2 else None
+        cond = None
+        if len(args) == 2:
+            cond =  args[1].strip()
         # Parse stuff before comma: [filename:]lineno | function.
         args = args[0].rsplit(':', 1)
         name = args[0].strip()
-        lineno =  args[1] if len(args) == 2 else args[0]
+        lineno = args[0]
+        if len(args) == 2:
+            lineno =  args[1]
         try:
             lineno = int(lineno)
         except ValueError:
             if len(args) == 2:
-                self.error('Bad lineno: "{}".'.format(lineno))
+                self.error('Bad lineno: "%s".' % lineno)
             else:
                 # Attempt the list of possible function or method fully
                 # qualified names and corresponding filenames.
@@ -704,16 +706,16 @@ class Pdb(bdb.Bdb, cmd.Cmd):
                 for fqn, fname in candidates:
                     try:
                         bp = self.set_break(fname, None, temporary, cond, fqn)
-                        self.message('Breakpoint {:d} at {}:{:d}'.format(
+                        self.message('Breakpoint %d at %s:%d' % (
                                                 bp.number, bp.file, bp.line))
                         return
                     except bdb.BdbError:
                         pass
                 if not candidates:
                     self.error(
-                        'Not a function or a built-in: "{}"'.format(name))
+                        'Not a function or a built-in: "%s"' % name)
                 else:
-                    self.error('Bad name: "{}".'.format(name))
+                    self.error('Bad name: "%s".' % name)
         else:
             filename = self.curframe.f_code.co_filename
             if len(args) == 2 and name:
@@ -729,14 +731,14 @@ class Pdb(bdb.Bdb, cmd.Cmd):
                 if ext == '':
                     filename = filename + '.py'
                 if not os.path.exists(filename):
-                    self.error('Bad filename: "{}".'.format(arg))
+                    self.error('Bad filename: "%s".' % arg)
                     return
             try:
                 bp = self.set_break(filename, lineno, temporary, cond)
-            except bdb.BdbError as err:
+            except bdb.BdbError, err:
                 self.error(err)
             else:
-                self.message('Breakpoint {:d} at {}:{:d}'.format(
+                self.message('Breakpoint %d at %s:%d' % (
                                         bp.number, bp.file, bp.line))
 
     # To be overridden in derived debuggers
@@ -770,7 +772,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         for i in args:
             try:
                 bp = self.get_bpbynumber(i)
-            except ValueError as err:
+            except ValueError, err:
                 self.error(err)
             else:
                 bp.enable()
@@ -790,7 +792,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         for i in args:
             try:
                 bp = self.get_bpbynumber(i)
-            except ValueError as err:
+            except ValueError, err:
                 self.error(err)
             else:
                 bp.disable()
@@ -812,7 +814,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
             cond = None
         try:
             bp = self.get_bpbynumber(args[0].strip())
-        except ValueError as err:
+        except ValueError, err:
             self.error(err)
         else:
             bp.cond = cond
@@ -839,7 +841,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
             count = 0
         try:
             bp = self.get_bpbynumber(args[0].strip())
-        except ValueError as err:
+        except ValueError, err:
             self.error(err)
         else:
             bp.ignore = count
@@ -897,7 +899,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         for i in numberlist:
             try:
                 bp = self.get_bpbynumber(i)
-            except ValueError as err:
+            except ValueError, err:
                 self.error(err)
             else:
                 self.clear_bpbynumber(i)
@@ -1068,7 +1070,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
                 self.curframe.f_lineno = arg
                 self.stack[self.curindex] = self.stack[self.curindex][0], arg
                 self.print_stack_entry(self.stack[self.curindex])
-            except ValueError as e:
+            except ValueError, e:
                 self.error('Jump failed: %s' % e)
     do_j = do_jump
 
@@ -1120,7 +1122,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         n = co.co_argcount
         if co.co_flags & 4: n = n+1
         if co.co_flags & 8: n = n+1
-        for i in range(n):
+        for i in xrange(n):
             name = co.co_varnames[i]
             if name in dict:
                 self.message('%s = %r' % (name, dict[name]))
@@ -1225,7 +1227,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         filename = bdb.canonic(self.curframe.f_code.co_filename)
         breaklist = self.get_file_breaks(filename)
         try:
-            lines = linecache.getlines(filename, self.curframe.f_globals)
+            lines = linecache.getlines(filename)
             self._print_lines(lines[first-1:last], first, breaklist,
                               self.curframe)
             self.lineno = min(last, len(lines))
@@ -1244,7 +1246,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         try:
             lines, lineno = getsourcelines(self.curframe,
                                 self.get_locals(self.curframe))
-        except IOError as err:
+        except IOError, err:
             self.error(err)
             return
         self._print_lines(lines, lineno, breaklist, self.curframe)
@@ -1260,7 +1262,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
             return
         try:
             lines, lineno = getsourcelines(obj, self.get_locals(self.curframe))
-        except (IOError, TypeError) as err:
+        except (IOError, TypeError), err:
             self.error(err)
             return
         self._print_lines(lines, lineno)
@@ -1274,7 +1276,8 @@ class Pdb(bdb.Bdb, cmd.Cmd):
             exc_lineno = self.tb_lineno.get(frame, -1)
         else:
             current_lineno = exc_lineno = -1
-        for lineno, line in enumerate(lines, start):
+        for lineno, line in enumerate(lines):
+            lineno += start
             s = str(lineno).rjust(3)
             if len(s) < 4:
                 s += ' '
@@ -1506,9 +1509,16 @@ class Pdb(bdb.Bdb, cmd.Cmd):
 
         self.mainpyfile = bdb.canonic(filename)
         self._user_requested_quit = False
-        with open(filename, "rb") as fp:
+        fp = None
+        try:
+            fp = open(filename, "rb")
             content = fp.read()
+        finally:
+            if fp:
+                fp.close()
         self.forget()
+        if not content.endswith('\n'):
+            content += '\n'
         self.run(compile(content, self.mainpyfile, 'exec'))
 
 # Collect all command help into docstring, if not run with -OO

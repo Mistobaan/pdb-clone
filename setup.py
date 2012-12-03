@@ -1,13 +1,8 @@
-#!/usr/bin/env python2.7
+#!/usr/bin/env python
 
 import sys
-if sys.version_info < (2, 7):
-    print >> sys.stderr, ('Python 2.7 is required to use this version'
-                                                        ' of pdb-clone.')
-    sys.exit(1)
 import os
 import doctest
-import importlib
 import shutil
 import test.test_support as support
 import distutils.core
@@ -70,48 +65,69 @@ class Test(distutils.core.Command):
             [t[:-3] for t in os.listdir(self.testdir) if
                 t.startswith('test_') and t.endswith('.py')])
         defaultTestLoader.testMethodPrefix = self.prefix
-        support.failfast = self.stop
         support.verbose = self.detail
 
     def run (self):
         """Run the test suite."""
-        result_tmplt = '{} ... {:d} tests with zero failures'
-        optionflags = doctest.REPORT_ONLY_FIRST_FAILURE if self.stop else 0
+        import testsuite.test_pdb
+        import testsuite.test_bdb
+        result_tmplt = '%s ... %d tests with zero failures'
+        optionflags = 0
+        if self.stop:
+            optionflags = doctest.REPORT_ONLY_FIRST_FAILURE
+        saved_dir = os.getcwd()
+        tmp_path = os.path.join(saved_dir, 'tempcwd')
         cnt = ok = 0
         for test in self.tests:
             cnt += 1
-            with support.temp_cwd() as cwd:
+            try:
+                os.mkdir(tmp_path)
+                os.chdir(tmp_path)
                 sys.path.insert(0, os.getcwd())
                 # Some unittest tests spawn a new instance of pdb.
-                shutil.copytree(os.path.join(support.SAVEDCWD, 'pdb_clone'),
-                                                os.path.join(cwd, 'pdb_clone'))
+                shutil.copytree(os.path.join(saved_dir, 'pdb_clone'),
+                                        os.path.join(tmp_path, 'pdb_clone'))
+                shutil.copyfile(os.path.join(saved_dir, 'pdb-clone'),
+                                        os.path.join(tmp_path, 'pdb-clone'))
                 abstest = self.testdir + '.' + test
-                module = importlib.import_module(abstest)
+                module = sys.modules[abstest]
                 suite = defaultTestLoader.loadTestsFromModule(module)
                 # Change the module name to allow correct doctest checks.
                 module.__name__ = 'test.' + test
-                print '{}:'.format(abstest)
+                print '%s:' % abstest
                 f, t = doctest.testmod(module, verbose=self.detail,
                                                         optionflags=optionflags)
                 if f:
-                    print '{:d} of {:d} doctests failed'.format(f, t)
+                    print '%d of %d doctests failed' % (f, t)
                 elif t:
-                    print result_tmplt.format('doctest', t)
+                    print result_tmplt % ('doctest', t)
 
                 try:
-                    support.run_unittest(suite)
-                except support.TestFailed as msg:
+                    tests = [t for t in suite]
+                    support.run_unittest(*tests)
+                except support.TestFailed, msg:
                     print 'test', test, 'failed --', msg
                 else:
-                    print result_tmplt.format('unittest',
+                    print result_tmplt % ('unittest',
                                                     suite.countTestCases())
                     if not f:
                         ok += 1
+            finally:
+                os.chdir(saved_dir)
+                if os.path.exists(tmp_path):
+                    shutil.rmtree(tmp_path)
+
         failed = cnt - ok
-        cnt = failed if failed else ok
-        plural = 's' if cnt > 1 else ''
-        result = 'failed' if failed else 'ok'
-        print '{:d} test{} {}.'.format(cnt, plural, result)
+        cnt = ok
+        if failed:
+            cnt = failed
+        plural = ''
+        if cnt > 1:
+            plural = 's'
+        result = 'ok'
+        if failed:
+            result = 'failed'
+        print '%d test%s %s.' % (cnt, plural, result)
 
 distutils.core.setup(
     cmdclass={'sdist': sdist,
@@ -123,7 +139,7 @@ distutils.core.setup(
 
     # meta-data
     name='pdb-clone',
-    version='1.1.py2',
+    version='1.1.py2.4',
     description=DESCRIPTION,
     long_description=DESCRIPTION,
     platforms='all',

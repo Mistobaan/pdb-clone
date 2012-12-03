@@ -1,13 +1,14 @@
 import sys
-import signal
+import os
 import unittest
 import linecache
 import textwrap
-import importlib
 from test import test_support as support
 from itertools import islice, chain
 
 from pdb_clone import bdb
+
+MODULE_CO_NAME = sys._getframe().f_code.co_name
 
 if __file__[-4:] in ('.pyc', '.pyo'):
     __file__ = __file__[:-1]
@@ -24,7 +25,7 @@ RETURN = ('return', )
 UP = ('up', )
 DOWN = ('down', )
 QUIT = ('quit', )
-TEST_MODULE = 'test_module.py'
+TEST_MODULE = 'bdb_test_module.py'
 
 def until(lineno=None):
     return 'until', (lineno, )
@@ -47,6 +48,12 @@ def disable(bpnum):
 def clear(lineno, fname=__file__):
     return 'clear', (bdb.canonic(fname), lineno)
 
+def unlink(filename):
+    try:
+        os.unlink(filename)
+    except OSError:
+        pass
+
 def _reset_Breakpoint():
     bdb.Breakpoint.next = 1
     bdb.Breakpoint.bpbynumber = [None]
@@ -57,9 +64,6 @@ class BdbTest(bdb.Bdb):
     def __init__(self, test_case, skip=None, sigint=False):
         bdb.Bdb.__init__(self, skip=skip)
         self.test_case = test_case
-        if sigint:
-            self._previous_sigint_handler = \
-                signal.signal(signal.SIGINT, self.sigint_handler)
         self.init_test()
 
     def init_test(self):
@@ -68,10 +72,6 @@ class BdbTest(bdb.Bdb):
         self.expct_list = list(islice(
                 chain([()], self.test_case.send_expect), 0, None, 2))
 
-    def sigint_handler(self, signum, frame):
-        signal.signal(signal.SIGINT, self._previous_sigint_handler)
-        self.set_trace(frame)
-
     def dispatch_call(self, frame, arg):
         if debug and self.botframe is None:
             f = frame.f_back
@@ -79,7 +79,10 @@ class BdbTest(bdb.Bdb):
                 if f.f_code.co_name.startswith('test_'):
                     break
                 f = f.f_back
-            print('\nTest {}'.format(f.f_code.co_name if f else '?'))
+            name = '?'
+            if f:
+                name = f.f_code.co_name
+            print '\nTest %s' % name
         return bdb.Bdb.dispatch_call(self, frame, arg)
 
     def get_stack(self, f, t):
@@ -89,18 +92,20 @@ class BdbTest(bdb.Bdb):
 
     def assertEqual(self, arg1, arg2, msg):
         self.test_case.assertEqual(arg1, arg2,
-            '{} at send_expect item {:d}, got "{}".'
-            .format(msg, self.se_cnt, arg2))
+            '%s at send_expect item %d, got "%s".'
+             % (msg, self.se_cnt, arg2))
 
     def lno_rel2abs(self, fname, lineno):
-        return (self.frame.f_code.co_firstlineno + lineno - 1
-            if (lineno and fname == bdb.canonic(__file__)) else lineno)
+        if lineno and fname == bdb.canonic(__file__):
+            return self.frame.f_code.co_firstlineno + lineno - 1
+        return lineno
 
     def lno_abs2rel(self):
         fname = bdb.canonic(self.frame.f_code.co_filename)
         lineno = self.frame.f_lineno
-        return ((lineno - self.frame.f_code.co_firstlineno + 1)
-                    if fname == bdb.canonic(__file__) else lineno)
+        if fname == bdb.canonic(__file__):
+            return lineno - self.frame.f_code.co_firstlineno + 1
+        return lineno
 
     def send(self, event):
         try:
@@ -111,12 +116,14 @@ class BdbTest(bdb.Bdb):
 
         self.se_cnt += 1
         set_type = send[0]
-        args = send[1] if len(send) == 2 else None
+        args = None
+        if len(send) == 2:
+            args = send[1]
         set_method = getattr(self, 'set_' + set_type)
         if debug:
             lineno = self.lno_abs2rel()
-            print('{}({:d}): {} event at line {:d} processing command {}'
-            .format(self.frame.f_code.co_name, self.se_cnt, event,
+            print ('%s(%d): %s event at line %d processing command %s'
+             % (self.frame.f_code.co_name, self.se_cnt, event,
                                                         lineno, set_type))
 
         if set_type in ('step', 'continue', 'quit'):
@@ -148,13 +155,12 @@ class BdbTest(bdb.Bdb):
 
             expect = self.check_lno_name(self.expct_list.pop(0))
             if len(expect) > 3:
-                self.test_case.fail('Invalid size of the {} expect tuple: {}'
-                    .format(set_type, expect))
+                self.test_case.fail('Invalid size of the %s expect tuple: %s'
+                     % (set_type, expect))
             # Process the next send_expect item.
             self.send(None)
         else:
-            self.test_case.fail('"{}" is an invalid send tuple.'
-                                                        .format(send))
+            self.test_case.fail('"%s" is an invalid send tuple.' % send)
 
     def check_lno_name(self, expect):
         s = len(expect)
@@ -162,7 +168,10 @@ class BdbTest(bdb.Bdb):
             lineno = self.lno_abs2rel()
             self.assertEqual(expect[1], lineno, 'Wrong line number')
         if s > 2:
-            self.assertEqual(expect[2], self.frame.f_code.co_name,
+            co_name = expect[2]
+            if co_name == '<module>':
+                co_name = MODULE_CO_NAME
+            self.assertEqual(co_name, self.frame.f_code.co_name,
                                                 'Wrong function name')
         return expect
 
@@ -179,8 +188,8 @@ class BdbTest(bdb.Bdb):
         self.get_stack(frame, None)
         expect = self.expect('call')
         if len(expect) > 3:
-            self.test_case.fail('Invalid size of the call expect tuple: {}'
-                .format(expect))
+            self.test_case.fail('Invalid size of the call expect tuple: %s'
+                 % expect)
         self.send('call')
 
     def user_line(self, frame, breakpoint_hits=None):
@@ -190,8 +199,7 @@ class BdbTest(bdb.Bdb):
             bps, temporaries = expect[3]
             bpnums = sorted(bps.keys())
             self.test_case.assertTrue(breakpoint_hits,
-                'No breakpoints hit at send_expect item {:d}.'
-                .format(self.se_cnt))
+                'No breakpoints hit at send_expect item %d.' % self.se_cnt)
             self.assertEqual(bpnums, breakpoint_hits[0],
                 'Breakpoint numbers do not match')
             self.assertEqual([bps[n] for n in bpnums],
@@ -208,8 +216,8 @@ class BdbTest(bdb.Bdb):
         self.get_stack(frame, None)
         expect = self.expect('return')
         if len(expect) > 3:
-            self.test_case.fail('Invalid size of the return expect tuple: {}'
-                .format(expect))
+            self.test_case.fail('Invalid size of the return expect tuple: %s'
+                 % expect)
         self.send('return')
 
     def user_exception(self, frame, exc_info):
@@ -217,8 +225,8 @@ class BdbTest(bdb.Bdb):
         expect = self.expect('exception')
         if len(expect) > 3:
             self.test_case.assertIsInstance(exc_info[1], expect[3],
-                'Wrong exception at send_expect item {:d}, got "{}".'
-                .format(self.se_cnt, exc_info))
+                'Wrong exception at send_expect item %d, got "%s".'
+                 % (self.se_cnt, exc_info))
         self.send('exception')
 
     def set_ignore(self, bpnum):
@@ -256,7 +264,7 @@ class BdbTest(bdb.Bdb):
 dbg_var = 1
 
 def dbg_module():
-    import test_module
+    import bdb_test_module
     lno = 3
 
 def dbg_foobar():
@@ -317,6 +325,7 @@ class SetMethodTestCase(unittest.TestCase):
         self.set_skip(None)
         self.set_sigint(False)
         self.set_restart(False)
+        self._cleanups = []
 
     def set_skip(self, skip):
         self.skip = skip
@@ -332,18 +341,34 @@ class SetMethodTestCase(unittest.TestCase):
         _reset_Breakpoint()
 
         self.addCleanup(_reset_Breakpoint)
-        self.addCleanup(sys.settrace, sys.gettrace())
-        self.addCleanup(bdb._module_finder.close)
+        if hasattr(sys, 'gettrace'):
+            self.addCleanup(sys.settrace, sys.gettrace())
+        else:
+            self.addCleanup(sys.settrace, None)
+
+    def tearDown(self):
+        while self._cleanups:
+            function, args, kwargs = self._cleanups.pop(-1)
+            try:
+                function(*args, **kwargs)
+            except:
+                pass
+
+    def addCleanup(self, function, *args, **kwargs):
+        self._cleanups.append((function, args, kwargs))
 
     def create_module(self, statements, module_name=TEST_MODULE[:-3]):
         """Create a module holding 'statements' to be debugged."""
         fname = module_name + '.py'
-        with open(fname, 'w') as f:
+        f = None
+        try:
+            f = open(fname, 'w')
             f.write(textwrap.dedent(statements))
-        self.addCleanup(support.unlink, fname)
+        finally:
+            if f:
+                f.close()
+        self.addCleanup(unlink, fname)
         self.addCleanup(support.forget, module_name)
-        if hasattr(importlib, 'invalidate_caches'):
-            importlib.invalidate_caches()
         # Update linecache cache and clear bdb cache.
         linecache.checkcache()
         bdb._modules = {}
@@ -354,7 +379,7 @@ class SetMethodTestCase(unittest.TestCase):
             if self.restart:
                 bdb_inst.restart()
             bdb_inst.runcall(func, *args, **kwds)
-        except self.failureException as err:
+        except self.failureException, err:
             # Do not show the BdbTest traceback when the test fails.
             raise self.failureException(err)
         self.assertFalse(bdb_inst.send_list,
@@ -367,7 +392,7 @@ class SetMethodTestCase(unittest.TestCase):
         try:
             bdb_inst.run(compile(textwrap.dedent(statements),
                                             TEST_MODULE, 'exec'))
-        except self.failureException as err:
+        except self.failureException, err:
             # Do not show the BdbTest traceback when the test fails.
             raise self.failureException(err)
         self.assertFalse(bdb_inst.send_list,
@@ -377,33 +402,30 @@ class SetMethodTestCase(unittest.TestCase):
         bdb_inst = BdbTest(self, skip=self.skip, sigint=self.sigint)
         try:
             bdb_inst.runeval(expr, globals, locals)
-        except self.failureException as err:
+        except self.failureException, err:
             # Do not show the BdbTest traceback when the test fails.
             raise self.failureException(err)
         self.assertFalse(bdb_inst.send_list,
                 'All send_expect sequences have not been processed.')
 
     def restart_runcall(self, bdb_inst, new_statements, func, *args, **kwds):
-        with open(TEST_MODULE, 'w') as f:
+        f = None
+        try:
+            f = open(TEST_MODULE, 'w')
             f.write(textwrap.dedent(new_statements))
-        if hasattr(importlib, 'invalidate_caches'):
-            importlib.invalidate_caches()
+        finally:
+            if f:
+                f.close()
 
         # Initialize the test again.
         bdb_inst.init_test()
 
         bdb_inst.restart()
-        self.assertFalse('test_module' in sys.modules,
-                'test_module has not been removed from sys.modules.')
-
-        # We need to remove the compiled file because the timestamp
-        # of the latest test_module.py may be the same as the one
-        # from the previous run, due to the test being this fast.
-        support.forget('test_module')
+        support.forget('bdb_test_module')
 
         try:
             bdb_inst.runcall(dbg_module)
-        except self.failureException as err:
+        except self.failureException, err:
             # Do not show the BdbTest traceback when the test fails.
             raise self.failureException(err)
         self.assertFalse(bdb_inst.send_list,
@@ -709,7 +731,7 @@ class RunCallTestCase(SetMethodTestCase):
         self.runcall(dbg_module)
 
     def test_skip(self):
-        self.set_skip(('importlib*', '_abcoll', 'os', 'test_module'))
+        self.set_skip(('importlib*', '_abcoll', 'os', 'bdb_test_module'))
         self.addCleanup(self.set_skip, None)
         self.create_module("""
             lno = 2
@@ -1117,7 +1139,7 @@ class BreakpointTestCase(SetMethodTestCase):
         self.addCleanup(self.set_restart, False)
         bdb_inst = self.runcall(dbg_module)
 
-        # Restart the debugger with a changed test_module.
+        # Restart the debugger with a changed bdb_test_module.
         new_statements = """
             def foo():
                 lno = 3
@@ -1154,7 +1176,7 @@ class BreakpointTestCase(SetMethodTestCase):
         self.addCleanup(self.set_restart, False)
         bdb_inst = self.runcall(dbg_module)
 
-        # Restart the debugger with a changed test_module.
+        # Restart the debugger with a changed bdb_test_module.
         new_statements = """
             def foo():
                 lno = 3
@@ -1182,7 +1204,7 @@ class BreakpointTestCase(SetMethodTestCase):
         self.addCleanup(self.set_restart, False)
         bdb_inst = self.runcall(dbg_module)
 
-        # Restart the debugger with a changed test_module.
+        # Restart the debugger with a changed bdb_test_module.
         new_statements = ""
         self.send_expect = [
             CONTINUE, (),
@@ -1206,7 +1228,7 @@ class BreakpointTestCase(SetMethodTestCase):
         self.addCleanup(self.set_restart, False)
         bdb_inst = self.runcall(dbg_module)
 
-        # Restart the debugger with a changed test_module.
+        # Restart the debugger with a changed bdb_test_module.
         new_statements = """
             def foo()
                 lno = 3
@@ -1259,34 +1281,11 @@ class RunTestCase(SetMethodTestCase):
             STEP, ('call', 2, 'foo'),
             STEP, ('line', 3, 'foo'),
             STEP, ('return', 3, 'foo'),
-            STEP, ('return', 1, '<module>'),
+            STEP, ('return', ),
             STEP, (),
         ]
-        import test_module
-        self.bdb_runeval('test_module.foo()', globals(), locals())
-
-    @unittest.skipIf(sys.platform == 'win32', 'a posix test')
-    def test_set_trace_step(self):
-        # Check that bdb does not step into its own code when handling SIGINT.
-        self.create_module("""
-            import os
-            import signal
-
-            pid = os.getpid()
-            os.kill(pid, signal.SIGINT)
-            lno = 7
-        """)
-        self.send_expect = [
-            break_lineno(3), (),
-            CONTINUE, ('line', 7, '<module>'),
-            STEP, ('return', 7, '<module>'),
-            CONTINUE, ('line', 3, 'dbg_module', ({1:1}, [])),
-            STEP, ('return', 3, 'dbg_module'),
-            STEP, (),
-        ]
-        self.set_sigint(True)
-        self.addCleanup(self.set_sigint, False)
-        self.runcall(dbg_module)
+        import bdb_test_module
+        self.bdb_runeval('bdb_test_module.foo()', globals(), locals())
 
     def test_run_frame_is_oldest_frame(self):
         # Check that the first frame is the oldest frame.
@@ -1309,31 +1308,9 @@ class RunTestCase(SetMethodTestCase):
             UP, (),
             UP, (),
         ]
-        import test_module
+        import bdb_test_module
         self.assertRaises(bdb.BdbError, self.bdb_runeval,
-                            'test_module.foo()', globals(), locals())
-
-    @unittest.skipIf(sys.platform == 'win32', 'a posix test')
-    def test_set_trace_frame_is_oldest_frame(self):
-        # Check that the first frame is the oldest frame.
-        self.create_module("""
-            import os
-            import signal
-
-            pid = os.getpid()
-            os.kill(pid, signal.SIGINT)
-            lno = 7
-        """)
-        self.send_expect = [
-            break_lineno(3), (),
-            CONTINUE, ('line', 7, '<module>'),
-            STEP, ('return', 7, '<module>'),
-            CONTINUE, ('line', 3, 'dbg_module', ({1:1}, [])),
-            UP, (),
-        ]
-        self.set_sigint(True)
-        self.addCleanup(self.set_sigint, False)
-        self.assertRaises(bdb.BdbError, self.runcall, dbg_module)
+                            'bdb_test_module.foo()', globals(), locals())
 
     def test_run_quit(self):
         statements = """
@@ -1356,8 +1333,8 @@ class RunTestCase(SetMethodTestCase):
             STEP, ('line', 3, 'foo'),
             QUIT, (),
         ]
-        import test_module
-        self.bdb_runeval('test_module.foo()', globals(), locals())
+        import bdb_test_module
+        self.bdb_runeval('bdb_test_module.foo()', globals(), locals())
 
 class IssueTestCase(SetMethodTestCase):
     """Test fixed issues."""
@@ -1493,7 +1470,7 @@ class IssueTestCase(SetMethodTestCase):
             break_lineno(4, TEST_MODULE), (),
             CONTINUE, ('line', 3, 'foo', ({1:1}, [])),
             CONTINUE, ('line', 4, 'foo', ({2:1}, [])),
-            # Make sure test_module is imported so that we may test
+            # Make sure bdb_test_module is imported so that we may test
             # later that it is removed by _module_finder on restart.
             CONTINUE, (),
         ]
@@ -1501,7 +1478,7 @@ class IssueTestCase(SetMethodTestCase):
         self.addCleanup(self.set_restart, False)
         bdb_inst = self.runcall(dbg_module)
 
-        # Restart the debugger with a changed test_module.
+        # Restart the debugger with a changed bdb_test_module.
         new_statements = """
             def bar():
                 lno = 3
@@ -1518,24 +1495,4 @@ class IssueTestCase(SetMethodTestCase):
             QUIT, (),
         ]
         self.restart_runcall(bdb_inst, new_statements, dbg_module)
-
-    def test_issue_16482(self):
-        # Check the frame line number after a 'continue' command while no
-        # breakpoints are set.
-        self.create_module("""
-            import sys
-
-            f = sys._getframe()
-            # The test is pass when we raise ValueError.
-            if f.f_lineno == 6:
-                raise ValueError
-        """)
-        self.send_expect = [
-            STEP, ('line', 2, 'dbg_module'),
-            STEP, ('call', 2, '<module>'),
-            CONTINUE, (),
-        ]
-        self.set_skip(('importlib*', '_abcoll', 'os'))
-        self.addCleanup(self.set_skip, None)
-        self.assertRaises(ValueError, self.runcall, dbg_module)
 
