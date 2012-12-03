@@ -13,58 +13,9 @@ from operator import attrgetter
 
 __all__ = ["BdbQuit", "Bdb", "Breakpoint"]
 
-class ModuleFinder(list):
-    """A list of the parent module names imported by the debuggee."""
-
-    PATH_ENTRY = 'pdb_module_finder'
-
-    def __init__(self):
-        self.hooked = False
-
-    def __call__(self, path_entry):
-        if path_entry != self.PATH_ENTRY:
-            raise ImportError()
-        return self
-
-    def find_module(self, fullname, path=None):
-        self.append(fullname)
-        return None
-
-    def reset(self):
-        """Remove from sys.modules the modules imported by the debuggee."""
-        if not self.hooked:
-            self.hooked = True
-            sys.path_hooks.append(self)
-            sys.path.insert(0, self.PATH_ENTRY)
-            return
-
-        for modname in self:
-            if modname in sys.modules:
-                del sys.modules[modname]
-                submods = []
-                for subm in sys.modules:
-                    if subm.startswith(modname + '.'):
-                        submods.append(subm)
-                # All submodules of modname may not have been imported by the
-                # debuggee, but they are still removed from sys.modules as
-                # there is no way to distinguish them.
-                for subm in submods:
-                    del sys.modules[subm]
-        self[:] = []
-
-    def close(self):
-        self.hooked = False
-        if self in sys.path_hooks:
-            sys.path_hooks.remove(self)
-        if self.PATH_ENTRY in sys.path:
-            sys.path.remove(self.PATH_ENTRY)
-        if self.PATH_ENTRY in sys.path_importer_cache:
-            del sys.path_importer_cache[self.PATH_ENTRY]
-
 # A dictionary mapping a filename to a BdbModule instance.
 _modules = {}
 _fncache = {}
-_module_finder = ModuleFinder()
 
 def canonic(filename):
     if filename == "<" + filename[1:-1] + ">":
@@ -89,17 +40,6 @@ def code_line_numbers(code):
         if lno != valid_lno:
             valid_lno = lno
             yield valid_lno
-
-def reiterate(it):
-    """Iterator wrapper allowing to reiterate on items with send()."""
-    while True:
-        item = it.next()
-        val = (yield item)
-        # Reiterate while the sent value is true.
-        while val:
-            # The return value of send().
-            yield item
-            val = (yield item)
 
 class BdbException(Exception):
     """A bdb exception."""
@@ -136,12 +76,14 @@ class BdbModule:
             self.code = None
             self.source_lines = linecache.getlines(self.filename)
             if not self.source_lines:
-                raise BdbSourceError('No lines in {}.'.format(self.filename))
+                raise BdbSourceError('No lines in %s.' % self.filename)
             try:
-                self.code = compile(''.join(self.source_lines),
-                                                self.filename, 'exec')
-            except (SyntaxError, TypeError) as err:
-                raise BdbSyntaxError('{}: {}.'.format(self.filename, err))
+                source = ''.join(self.source_lines)
+                if not source.endswith('\n'):
+                    source += '\n'
+                self.code = compile(source, self.filename, 'exec')
+            except (SyntaxError, TypeError), err:
+                raise BdbSyntaxError('%s: %s.' % (self.filename, err))
             # At this point we still need to test for self.filename in
             # linecache.cache because of doctest scripts, as doctest installs a
             # hook at linecache.getlines to allow <doctest name> to be
@@ -156,12 +98,12 @@ class BdbModule:
         """The first line number of the last defined 'funcname' function."""
         if self.functions_firstlno is None:
             self.functions_firstlno = {}
-            self.parse(reiterate(tokenize.generate_tokens(
+            self.parse((tokenize.generate_tokens(
                                     iter(self.source_lines).next)))
         try:
             return self.functions_firstlno[funcname]
         except KeyError:
-            raise BdbSourceError('{}: function "{}" not found.'.format(
+            raise BdbSourceError('%s: function "%s" not found.' % (
                 self.filename, funcname))
 
     def get_actual_bp(self, lineno):
@@ -221,15 +163,21 @@ class BdbModule:
         if self.code:
             code_dist = _distance(self.code, module_level=True)
         if not self.code or not code_dist:
-            raise BdbSourceError('{}: line {} is after the last '
-                'valid statement.'.format(self.filename, lineno))
+            raise BdbSourceError('%s: line %s is after the last '
+                'valid statement.' % (self.filename, lineno))
         return code_dist[1]
 
     def parse(self, tok_generator, cindent=0, clss=None):
         func_lno = 0
         indent = 0
+        previous = None
         try:
-            for tokentype, tok, srowcol, _end, _line in tok_generator:
+            while True:
+                if previous:
+                    tokentype, tok, srowcol = previous
+                    previous = None
+                else:
+                    tokentype, tok, srowcol = tok_generator.next()[0:3]
                 if tokentype == token.DEDENT:
                     # End of function definition.
                     if func_lno and srowcol[1] <= indent:
@@ -241,8 +189,7 @@ class BdbModule:
                     if func_lno and srowcol[1] <= indent:
                         func_lno = 0
                     if clss and srowcol[1] <= cindent:
-                        tok_generator.send(1)
-                        return
+                        return tokentype, tok, srowcol
                     tokentype, name = tok_generator.next()[0:2]
                     if tokentype != token.NAME:
                         continue  # syntax error
@@ -250,13 +197,13 @@ class BdbModule:
                     if func_lno:
                             continue
                     if clss:
-                        name = '{}.{}'.format(clss, name)
+                        name = '%s.%s' % (clss, name)
                     if tok == 'def':
                         lineno, indent = srowcol
                         func_lno = lineno
                         self.functions_firstlno[name] = lineno
                     else:
-                        self.parse(tok_generator, srowcol[1], name)
+                        previous = self.parse(tok_generator, srowcol[1], name)
         except StopIteration:
             pass
 
@@ -364,12 +311,12 @@ class Bdb:
     """
 
     def __init__(self, skip=None):
-        self.skip = set(skip) if skip else None
+        self.skip = None
+        if skip:
+            self.skip = set(skip)
         # A dictionary mapping a filename to a ModuleBreakpoints instance.
         self.breakpoints = {}
         self._reset()
-        self.skip_calls = (ModuleFinder.__call__.__code__,
-                           ModuleFinder.find_module.__code__)
 
         # Backward compatibility
     def canonic(self, filename):
@@ -384,7 +331,6 @@ class Bdb:
 
     def restart(self):
         """Restart the debugger after source code changes."""
-        _module_finder.reset()
         linecache.checkcache()
         for module_bpts in self.breakpoints.values():
             module_bpts.reset()
@@ -423,8 +369,6 @@ class Bdb:
         if self.ignore_first_call_event:
             self.ignore_first_call_event = False
             return self.trace_dispatch
-        if frame.f_code in self.skip_calls:
-            return # None
         if not (self.stop_here(frame) or self.break_at_function(frame)):
             # No need to trace this function.
             return # None
@@ -628,7 +572,7 @@ class Bdb:
             raise BdbQuit
         # Do not re-install the local trace when we are finished debugging, see
         # issues 16482 and 7238.
-        if not sys.gettrace():
+        if hasattr(sys, 'gettrace') and not sys.gettrace():
             return None
         return self.trace_dispatch
 
@@ -702,7 +646,7 @@ class Bdb:
     def clear_bpbynumber(self, arg):
         try:
             bp = self.get_bpbynumber(arg)
-        except ValueError as err:
+        except ValueError, err:
             return str(err)
         bp.deleteMe()
 
@@ -741,8 +685,8 @@ class Bdb:
         return [bp.line for bp in self.breakpoints[filename].all_breakpoints()]
 
     def has_breaks(self):
-        return any(self.breakpoints[f].breakpts.keys()
-                        for f in self.breakpoints)
+        return bool([f for f in self.breakpoints
+                        if self.breakpoints[f].breakpts.keys()])
 
     # Derived classes and clients can call the following method
     # to get a data structure representing a stack trace.
@@ -787,7 +731,7 @@ class Bdb:
             rv = locals['__return__']
             s += '->'
             s += repr.repr(rv)
-        line = linecache.getline(filename, lineno, frame.f_globals)
+        line = linecache.getline(filename, lineno)
         if line:
             s += lprefix + line.strip()
         return s
@@ -804,12 +748,15 @@ class Bdb:
             locals = globals
         self._reset()
         if isinstance(cmd, str):
+            if not cmd.endswith('\n'):
+                cmd += '\n'
             cmd = compile(cmd, "<string>", "exec")
         sys.settrace(self.trace_dispatch)
         try:
-            exec cmd in globals, locals
-        except BdbQuit:
-            pass
+            try:
+                exec cmd in globals, locals
+            except BdbQuit:
+                pass
         finally:
             sys.settrace(None)
 
@@ -822,9 +769,10 @@ class Bdb:
         self._reset()
         sys.settrace(self.trace_dispatch)
         try:
-            return eval(expr, globals, locals)
-        except BdbQuit:
-            pass
+            try:
+                return eval(expr, globals, locals)
+            except BdbQuit:
+                pass
         finally:
             sys.settrace(None)
 
@@ -839,9 +787,10 @@ class Bdb:
         sys.settrace(self.trace_dispatch)
         res = None
         try:
-            res = func(*args, **kwds)
-        except BdbQuit:
-            pass
+            try:
+                res = func(*args, **kwds)
+            except BdbQuit:
+                pass
         finally:
             sys.settrace(None)
         return res
@@ -954,7 +903,7 @@ class Tdb(Bdb):
         name = frame.f_code.co_name
         if not name: name = '???'
         fn = canonic(frame.f_code.co_filename)
-        line = linecache.getline(fn, frame.f_lineno, frame.f_globals)
+        line = linecache.getline(fn, frame.f_lineno)
         print '+++', fn, frame.f_lineno, name, ':', line.strip()
     def user_return(self, frame, retval):
         print '+++ return', retval

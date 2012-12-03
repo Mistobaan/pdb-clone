@@ -7,7 +7,6 @@ import os
 import unittest
 import subprocess
 import textwrap
-import importlib
 
 from test import test_support as support
 # This little helper class is essential for testing pdb under doctest.
@@ -15,6 +14,14 @@ from test.test_doctest import _FakeInput
 
 # Some unittest tests spawn a new instance of pdb.
 os.environ['PYTHONPATH'] = os.path.abspath('pdb_clone')
+
+MODULE_CO_NAME = sys._getframe().f_code.co_name
+
+def unlink(filename):
+    try:
+        os.unlink(filename)
+    except OSError:
+        pass
 
 
 class PdbTestInput(object):
@@ -26,12 +33,14 @@ class PdbTestInput(object):
     def __enter__(self):
         self.real_stdin = sys.stdin
         sys.stdin = _FakeInput(self.input)
-        self.orig_trace = sys.gettrace() if hasattr(sys, 'gettrace') else None
+        self.orig_trace = None
+        gettrace = getattr(sys, 'gettrace', None)
+        if gettrace:
+            self.orig_trace = gettrace()
 
     def __exit__(self, *exc):
         sys.stdin = self.real_stdin
-        if self.orig_trace:
-            sys.settrace(self.orig_trace)
+        sys.settrace(self.orig_trace)
 
 
 def test_pdb_displayhook():
@@ -39,17 +48,21 @@ def test_pdb_displayhook():
 
     >>> def test_function(foo, bar):
     ...     from pdb_clone import pdb; pdb.Pdb(nosigint=True).set_trace()
-    ...     pass
+    ...     x = 1
 
-    >>> with PdbTestInput([
+    >>> pti = PdbTestInput([
     ...     'foo',
     ...     'bar',
     ...     'for i in range(5): print i',
     ...     'continue',
-    ... ]):
+    ... ])
+    >>> try:
+    ...     pti.__enter__()
     ...     test_function(1, None)
+    ... finally:
+    ...     pti.__exit__()
     > <doctest test.test_pdb.test_pdb_displayhook[0]>(3)test_function()
-    -> pass
+    -> x = 1
     (Pdb) foo
     1
     (Pdb) bar
@@ -82,7 +95,7 @@ def test_pdb_basic_commands():
     ...     ret = test_function_2('baz')
     ...     print ret
 
-    >>> with PdbTestInput([  # doctest: +ELLIPSIS, +NORMALIZE_WHITESPACE
+    >>> pti = PdbTestInput([
     ...     'step',       # entering the function call
     ...     'args',       # display function args
     ...     'list',       # list function source
@@ -98,8 +111,12 @@ def test_pdb_basic_commands():
     ...     'return',     # return out of function
     ...     'retval',     # display return value
     ...     'continue',
-    ... ]):
-    ...    test_function()
+    ... ])
+    >>> try:   # doctest: +ELLIPSIS, +NORMALIZE_WHITESPACE
+    ...     pti.__enter__()
+    ...     test_function()
+    ... finally:
+    ...     pti.__exit__()
     > <doctest test.test_pdb.test_pdb_basic_commands[1]>(3)test_function()
     -> ret = test_function_2('baz')
     (Pdb) step
@@ -123,7 +140,6 @@ def test_pdb_basic_commands():
     [EOF]
     (Pdb) bt
     ...
-      <doctest test.test_pdb.test_pdb_basic_commands[2]>(18)<module>()
     -> test_function()
       <doctest test.test_pdb.test_pdb_basic_commands[1]>(3)test_function()
     -> ret = test_function_2('baz')
@@ -195,7 +211,7 @@ def test_pdb_breakpoint_commands():
     the breakpoint list outputs a tab for the "stop only" and "ignore next"
     lines, which we don't want to put in here.
 
-    >>> with PdbTestInput([  # doctest: +NORMALIZE_WHITESPACE
+    >>> pti = PdbTestInput([
     ...     'break 3',
     ...     'disable 1',
     ...     'ignore 1 10',
@@ -218,8 +234,12 @@ def test_pdb_breakpoint_commands():
     ...     'continue',  # will stop at temporary breakpoint
     ...     'break',     # make sure breakpoint is gone
     ...     'continue',
-    ... ]):
-    ...    test_function()
+    ... ])
+    >>> try:  # doctest: +NORMALIZE_WHITESPACE
+    ...     pti.__enter__()
+    ...     test_function()
+    ... finally:
+    ...     pti.__exit__()
     > <doctest test.test_pdb.test_pdb_breakpoint_commands[0]>(3)test_function()
     -> print 1
     (Pdb) break 3
@@ -309,7 +329,7 @@ def test_list_commands():
     ...     from pdb_clone import pdb; pdb.Pdb(nosigint=True).set_trace()
     ...     ret = test_function_2('baz')
 
-    >>> with PdbTestInput([  # doctest: +ELLIPSIS, +NORMALIZE_WHITESPACE
+    >>> pti = PdbTestInput([
     ...     'list',      # list first function
     ...     'step',      # step into second function
     ...     'list',      # list second function
@@ -323,8 +343,12 @@ def test_list_commands():
     ...     'source do_something',  # list all lines of function
     ...     'source fooxxx',        # something that doesn't exit
     ...     'continue',
-    ... ]):
-    ...    test_function()
+    ... ])
+    >>> try:   # doctest: +ELLIPSIS, +NORMALIZE_WHITESPACE
+    ...     pti.__enter__()
+    ...     test_function()
+    ... finally:
+    ...     pti.__exit__()
     > <doctest test.test_pdb.test_list_commands[1]>(3)test_function()
     -> ret = test_function_2('baz')
     (Pdb) list
@@ -396,18 +420,22 @@ def test_post_mortem():
     ...     test_function_2()
     ...     print 'Not reached.'
 
-    >>> with PdbTestInput([  # doctest: +ELLIPSIS, +NORMALIZE_WHITESPACE
+    >>> pti = PdbTestInput([
     ...     'next',      # step over exception-raising call
     ...     'bt',        # get a backtrace
     ...     'list',      # list code of test_function()
     ...     'down',      # step into test_function_2()
     ...     'list',      # list code of test_function_2()
     ...     'continue',
-    ... ]):
-    ...    try:
-    ...        test_function()
-    ...    except ZeroDivisionError:
-    ...        print 'Correctly reraised.'
+    ... ])
+    >>> try:  # doctest: +ELLIPSIS, +NORMALIZE_WHITESPACE
+    ...     pti.__enter__()
+    ...     try:
+    ...         test_function()
+    ...     except ZeroDivisionError:
+    ...         print 'Correctly reraised.'
+    ... finally:
+    ...     pti.__exit__()
     > <doctest test.test_pdb.test_post_mortem[1]>(3)test_function()
     -> test_function_2()
     (Pdb) next
@@ -417,7 +445,6 @@ def test_post_mortem():
     -> test_function_2()
     (Pdb) bt
     ...
-      <doctest test.test_pdb.test_post_mortem[2]>(10)<module>()
     -> test_function()
     > <doctest test.test_pdb.test_post_mortem[1]>(3)test_function()
     -> test_function_2()
@@ -453,11 +480,15 @@ def test_pdb_skip_modules():
     ...     pdb.Pdb(skip=['stri*'], nosigint=True).set_trace()
     ...     string.capwords('FOO')
 
-    >>> with PdbTestInput([
+    >>> pti = PdbTestInput([
     ...     'step',
     ...     'continue',
-    ... ]):
+    ... ])
+    >>> try:
+    ...     pti.__enter__()
     ...     skip_module()
+    ... finally:
+    ...     pti.__exit__()
     > <doctest test.test_pdb.test_pdb_skip_modules[0]>(5)skip_module()
     -> string.capwords('FOO')
     (Pdb) step
@@ -483,16 +514,20 @@ def test_pdb_skip_modules_with_callback():
     ...     pdb.Pdb(skip=['module_to_skip*'], nosigint=True).set_trace()
     ...     mod.foo_pony(callback)
 
-    >>> with PdbTestInput([
+    >>> pti = PdbTestInput([
     ...     'step',
     ...     'step',
     ...     'step',
     ...     'step',
     ...     'step',
     ...     'continue',
-    ... ]):
+    ... ])
+    >>> try:  # doctest: +ELLIPSIS
+    ...     pti.__enter__()
     ...     skip_module()
     ...     pass  # provides something to "step" to
+    ... finally:
+    ...     pti.__exit__()
     > <doctest test.test_pdb.test_pdb_skip_modules_with_callback[0]>(6)skip_module()
     -> mod.foo_pony(callback)
     (Pdb) step
@@ -511,7 +546,7 @@ def test_pdb_skip_modules_with_callback():
     > <doctest test.test_pdb.test_pdb_skip_modules_with_callback[0]>(6)skip_module()->None
     -> mod.foo_pony(callback)
     (Pdb) step
-    > <doctest test.test_pdb.test_pdb_skip_modules_with_callback[1]>(10)<module>()
+    > <doctest test.test_pdb.test_pdb_skip_modules_with_callback[2]>(4)...()
     -> pass  # provides something to "step" to
     (Pdb) continue
     """
@@ -529,15 +564,19 @@ def test_pdb_continue_in_bottomframe():
     ...     print 3
     ...     print 4
 
-    >>> with PdbTestInput([  # doctest: +ELLIPSIS
+    >>> pti = PdbTestInput([
     ...     'next',
     ...     'break 7',
     ...     'continue',
     ...     'next',
     ...     'continue',
     ...     'continue',
-    ... ]):
-    ...    test_function()
+    ... ])
+    >>> try:  # doctest: +ELLIPSIS
+    ...     pti.__enter__()
+    ...     test_function()
+    ... finally:
+    ...     pti.__exit__()
     > <doctest test.test_pdb.test_pdb_continue_in_bottomframe[0]>(4)test_function()
     -> inst.botframe = sys._getframe()  # hackery to get the right botframe
     (Pdb) next
@@ -569,13 +608,19 @@ def test_pdb_run_with_incorrect_argument():
     """Testing run and runeval with incorrect first argument.
 
     >>> pti = PdbTestInput(['continue',])
-    >>> with pti:
+    >>> try:
+    ...     pti.__enter__()
     ...     pdb_invoke('run', lambda x: x)
+    ... finally:
+    ...     pti.__exit__()
     Traceback (most recent call last):
     TypeError: exec: arg 1 must be a string, file, or code object
 
-    >>> with pti:
+    >>> try:
+    ...     pti.__enter__()
     ...     pdb_invoke('runeval', lambda x: x)
+    ... finally:
+    ...     pti.__exit__()
     Traceback (most recent call last):
     TypeError: eval() arg 1 must be a string or code object
     """
@@ -584,20 +629,28 @@ def test_pdb_run_with_incorrect_argument():
 def test_pdb_run_with_code_object():
     """Testing run and runeval with code object as a first argument.
 
-    >>> with PdbTestInput(['step','x', 'continue']):  # doctest: +ELLIPSIS
+    >>> pti = PdbTestInput(['step','x', 'continue'])
+    >>> try:  # doctest: +ELLIPSIS
+    ...     pti.__enter__()
     ...     pdb_invoke('run', compile('x=1', '<string>', 'exec'))
-    > <string>(1)<module>()...
+    ... finally:
+    ...     pti.__exit__()
+    > <string>(1)...()...
     (Pdb) step
     --Return--
-    > <string>(1)<module>()->None
+    > <string>(1)...()->None
     (Pdb) x
     1
     (Pdb) continue
 
-    >>> with PdbTestInput(['x', 'continue']):
+    >>> pti = PdbTestInput(['x', 'continue'])
+    >>> try:  # doctest: +ELLIPSIS
+    ...     pti.__enter__()
     ...     x=0
     ...     pdb_invoke('runeval', compile('x+1', '<string>', 'eval'))
-    > <string>(1)<module>()->None
+    ... finally:
+    ...     pti.__exit__()
+    > <string>...()->None
     (Pdb) x
     1
     (Pdb) continue
@@ -615,7 +668,7 @@ def test_pdb_set_frame_locals():
     ...     from pdb_clone import pdb; pdb.Pdb().set_trace()
     ...     z = y
 
-    >>> with PdbTestInput([
+    >>> pti = PdbTestInput([
     ...     'y',
     ...     '!y = 42',
     ...     'y',
@@ -628,8 +681,12 @@ def test_pdb_set_frame_locals():
     ...     'step',
     ...     'y',
     ...     'continue'
-    ... ]):
-    ...      foo(1)
+    ... ])
+    >>> try:
+    ...     pti.__enter__()
+    ...     foo(1)
+    ... finally:
+    ...     pti.__exit__()
     > <doctest test.test_pdb.test_pdb_set_frame_locals[1]>(4)bar()
     -> z = y
     (Pdb) y
@@ -685,21 +742,41 @@ def normalize(result, filename='', strip_bp_lnum=False):
         lines.append(line.strip())
     return '\n'.join(lines)
 
-
 class PdbTestCase(unittest.TestCase):
+    pass
+
+class IssueTestCase(PdbTestCase):
+
+    def __init__(self, methodName='runTest'):
+        unittest.TestCase.__init__(self, methodName)
+        self._cleanups = []
+
+    def tearDown(self):
+        while self._cleanups:
+            function, args, kwargs = self._cleanups.pop(-1)
+            try:
+                function(*args, **kwargs)
+            except:
+                pass
+
+    def addCleanup(self, function, *args, **kwargs):
+        self._cleanups.append((function, args, kwargs))
 
     def run_pdb(self, script, commands, filename):
         """Run 'script' lines with pdb and the pdb 'commands'."""
-        with open(filename, 'w') as f:
+        f = None
+        try:
+            f = open(filename, 'w')
             f.write(textwrap.dedent(script))
-        self.addCleanup(support.unlink, filename)
-        cmd = [sys.executable, '-m', 'pdb', filename]
+        finally:
+            if f:
+                f.close()
+        self.addCleanup(unlink, filename)
+        cmd = [sys.executable, 'pdb-clone', filename]
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                                    stdin=subprocess.PIPE,
                                    stderr=subprocess.PIPE)
-        stdout, stderr = proc.communicate(str.encode(commands))
-        stdout = stdout and bytes.decode(stdout)
-        stderr = stderr and bytes.decode(stderr)
+        stdout, stderr = proc.communicate(commands)
         return stdout, stderr
 
     def test_issue13183(self):
@@ -730,14 +807,17 @@ class PdbTestCase(unittest.TestCase):
             def bar():
                 pass
         """
-        with open('bar.py', 'w') as f:
+        f = None
+        try:
+            f = open('bar.py', 'w')
             f.write(textwrap.dedent(bar))
-        if hasattr(importlib, 'invalidate_caches'):
-            importlib.invalidate_caches()
-        self.addCleanup(support.unlink, 'bar.py')
+        finally:
+            if f:
+                f.close()
+        self.addCleanup(unlink, 'bar.py')
         stdout, stderr = self.run_pdb(script, commands, 'main.py')
         self.assertTrue(
-            any('main.py(5)foo()->None' in l for l in stdout.splitlines()),
+            'main.py(5)foo()->None' in stdout,
             'Fail to step into the caller after a return')
 
     def test_issue14789(self):
@@ -764,7 +844,7 @@ class PdbTestCase(unittest.TestCase):
             quit
         """
         expected = """
-            > main.py(2)<module>()
+            > main.py(2)%s()
             -> def bar(a):
             Breakpoint 1 at main.py:2
             Will ignore next 1 crossing of breakpoint 1.
@@ -779,14 +859,14 @@ class PdbTestCase(unittest.TestCase):
                     breakpoint already hit 2 times
             2 breakpoint keep yes at main.py:2
                     breakpoint already hit 2 times
-        """
+        """ % MODULE_CO_NAME
         filename = 'main.py'
         stdout, stderr = self.run_pdb(script, commands, filename)
         stdout = normalize(stdout, filename)
         expected = normalize(expected)
         self.assertTrue(stdout in expected,
-            '\n\nExpected:\n{}\nGot:\n{}\n'
-            'Fail to handle two breakpoints set on the same line.'.format(
+            '\n\nExpected:\n%s\nGot:\n%s\n'
+            'Fail to handle two breakpoints set on the same line.' % (
                 expected, stdout))
 
     def test_set_breakpoint_by_function_name(self):
@@ -821,7 +901,7 @@ class PdbTestCase(unittest.TestCase):
             quit
         """
         expected = """
-            > main.py(2)<module>()
+            > main.py(2)%s()
             -> class C:
             *** Bad name: "C".
             *** Bad name: "C.c_foo".
@@ -837,16 +917,16 @@ class PdbTestCase(unittest.TestCase):
             Breakpoint 4 at main.py:6
             Breakpoint 5 at main.py:9
             *** Not a function or a built-in: "not_a_function"
-        """
+        """ % MODULE_CO_NAME
         filename = 'main.py'
         stdout, stderr = self.run_pdb(script, commands, filename)
         stdout = normalize(normalize(
                     stdout, 'handlers.py', strip_bp_lnum=True), filename)
         expected = normalize(expected, 'handlers.py', strip_bp_lnum=True)
         self.assertTrue(stdout in expected,
-            '\n\nExpected:\n{}\nGot:\n{}\n'
+            '\n\nExpected:\n%s\nGot:\n%s\n'
             'Fail to handle a breakpoint set by function name.'
-            .format(expected, stdout))
+             % (expected, stdout))
 
     def test_issue_16180(self):
         # A syntax error in the debuggee.
@@ -867,9 +947,9 @@ class PdbTestCase(unittest.TestCase):
         stderr = normalize(stderr, filename)
         expected = normalize(expected)
         self.assertTrue(expected in stderr,
-            '\n\nExpected:\n{}\nGot:\n{}\n'
+            '\n\nExpected:\n%s\nGot:\n%s\n'
             'Fail to handle a syntax error in the debuggee.'
-            .format(expected, stderr))
+             % (expected, stderr))
 
     def test_issue_13044(self):
         script = """
@@ -893,23 +973,28 @@ class PdbTestCase(unittest.TestCase):
         # attribute 'path'" in <function _remove at 0xb73b6df4> ignored
         error = 'Exception'
         filename = 'main.py'
-        with open(filename, 'w') as f:
+        f = None
+        try:
+            f = open(filename, 'w')
             f.write(textwrap.dedent(script))
-        self.addCleanup(support.unlink, filename)
+        finally:
+            if f:
+                f.close()
+        self.addCleanup(unlink, filename)
         cmd = [sys.executable, filename]
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                                    stdin=subprocess.PIPE,
                                    stderr=subprocess.PIPE)
-        stdout, stderr = proc.communicate(str.encode(commands))
-        stderr = stderr and normalize(bytes.decode(stderr))
+        stdout, stderr = proc.communicate(commands)
+        stderr = stderr and normalize(stderr)
         error = normalize(error)
         self.assertTrue(error not in stderr,
-            '\n\nError not expected:\n{}\nGot:\n{}\n'
+            '\n\nError not expected:\n%s\nGot:\n%s\n'
             'The debugger is still active while the interpreter shuts down.'
-            .format(error, stderr))
+             % (error, stderr))
 
     def tearDown(self):
-        support.unlink(support.TESTFN)
+        unlink(support.TESTFN)
 
 
 def test_main():
