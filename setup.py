@@ -121,7 +121,7 @@ distutils.core.setup(
 
     # meta-data
     name='pdb-clone',
-    version='1.1.py3',
+    version='1.2.py3',
     description=DESCRIPTION,
     long_description=DESCRIPTION,
     platforms='all',
