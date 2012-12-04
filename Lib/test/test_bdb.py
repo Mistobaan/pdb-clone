@@ -21,7 +21,7 @@ RETURN = ('return', )
 UP = ('up', )
 DOWN = ('down', )
 QUIT = ('quit', )
-TEST_MODULE = 'test_module.py'
+TEST_MODULE = 'bdb_test_module.py'
 
 def until(lineno=None):
     return 'until', (lineno, )
@@ -251,7 +251,7 @@ class BdbTest(bdb.Bdb):
 dbg_var = 1
 
 def dbg_module():
-    import test_module
+    import bdb_test_module
     lno = 3
 
 def dbg_foobar():
@@ -388,13 +388,13 @@ class SetMethodTestCase(unittest.TestCase):
         bdb_inst.init_test()
 
         bdb_inst.restart()
-        self.assertFalse('test_module' in sys.modules,
-                'test_module has not been removed from sys.modules.')
+        self.assertFalse('bdb_test_module' in sys.modules,
+                'bdb_test_module has not been removed from sys.modules.')
 
         # We need to remove the compiled file because the timestamp
-        # of the latest test_module.py may be the same as the one
+        # of the latest bdb_test_module.py may be the same as the one
         # from the previous run, due to the test being this fast.
-        support.forget('test_module')
+        support.forget('bdb_test_module')
 
         try:
             bdb_inst.runcall(dbg_module)
@@ -704,7 +704,7 @@ class RunCallTestCase(SetMethodTestCase):
         self.runcall(dbg_module)
 
     def test_skip(self):
-        self.set_skip(('importlib*', '_abcoll', 'os', 'test_module'))
+        self.set_skip(('importlib*', '_abcoll', 'os', 'bdb_test_module'))
         self.addCleanup(self.set_skip, None)
         self.create_module("""
             lno = 2
@@ -1112,7 +1112,7 @@ class BreakpointTestCase(SetMethodTestCase):
         self.addCleanup(self.set_restart, False)
         bdb_inst = self.runcall(dbg_module)
 
-        # Restart the debugger with a changed test_module.
+        # Restart the debugger with a changed bdb_test_module.
         new_statements = """
             def foo():
                 lno = 3
@@ -1149,7 +1149,7 @@ class BreakpointTestCase(SetMethodTestCase):
         self.addCleanup(self.set_restart, False)
         bdb_inst = self.runcall(dbg_module)
 
-        # Restart the debugger with a changed test_module.
+        # Restart the debugger with a changed bdb_test_module.
         new_statements = """
             def foo():
                 lno = 3
@@ -1177,7 +1177,7 @@ class BreakpointTestCase(SetMethodTestCase):
         self.addCleanup(self.set_restart, False)
         bdb_inst = self.runcall(dbg_module)
 
-        # Restart the debugger with a changed test_module.
+        # Restart the debugger with a changed bdb_test_module.
         new_statements = ""
         self.send_expect = [
             CONTINUE, (),
@@ -1201,7 +1201,7 @@ class BreakpointTestCase(SetMethodTestCase):
         self.addCleanup(self.set_restart, False)
         bdb_inst = self.runcall(dbg_module)
 
-        # Restart the debugger with a changed test_module.
+        # Restart the debugger with a changed bdb_test_module.
         new_statements = """
             def foo()
                 lno = 3
@@ -1257,8 +1257,8 @@ class RunTestCase(SetMethodTestCase):
             STEP, ('return', 1, '<module>'),
             STEP, (),
         ]
-        import test_module
-        self.bdb_runeval('test_module.foo()', globals(), locals())
+        import bdb_test_module
+        self.bdb_runeval('bdb_test_module.foo()', globals(), locals())
 
     @unittest.skipIf(sys.platform == 'win32', 'a posix test')
     def test_set_trace_step(self):
@@ -1304,9 +1304,9 @@ class RunTestCase(SetMethodTestCase):
             UP, (),
             UP, (),
         ]
-        import test_module
+        import bdb_test_module
         self.assertRaises(bdb.BdbError, self.bdb_runeval,
-                            'test_module.foo()', globals(), locals())
+                            'bdb_test_module.foo()', globals(), locals())
 
     @unittest.skipIf(sys.platform == 'win32', 'a posix test')
     def test_set_trace_frame_is_oldest_frame(self):
@@ -1351,8 +1351,8 @@ class RunTestCase(SetMethodTestCase):
             STEP, ('line', 3, 'foo'),
             QUIT, (),
         ]
-        import test_module
-        self.bdb_runeval('test_module.foo()', globals(), locals())
+        import bdb_test_module
+        self.bdb_runeval('bdb_test_module.foo()', globals(), locals())
 
 class IssueTestCase(SetMethodTestCase):
     """Test fixed issues."""
@@ -1488,7 +1488,7 @@ class IssueTestCase(SetMethodTestCase):
             break_lineno(4, TEST_MODULE), (),
             CONTINUE, ('line', 3, 'foo', ({1:1}, [])),
             CONTINUE, ('line', 4, 'foo', ({2:1}, [])),
-            # Make sure test_module is imported so that we may test
+            # Make sure bdb_test_module is imported so that we may test
             # later that it is removed by _module_finder on restart.
             CONTINUE, (),
         ]
@@ -1496,7 +1496,7 @@ class IssueTestCase(SetMethodTestCase):
         self.addCleanup(self.set_restart, False)
         bdb_inst = self.runcall(dbg_module)
 
-        # Restart the debugger with a changed test_module.
+        # Restart the debugger with a changed bdb_test_module.
         new_statements = """
             def bar():
                 lno = 3
