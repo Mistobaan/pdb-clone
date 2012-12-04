@@ -85,6 +85,8 @@ class Test(distutils.core.Command):
                 # Some unittest tests spawn a new instance of pdb.
                 shutil.copytree(os.path.join(support.SAVEDCWD, 'pdb_clone'),
                                                 os.path.join(cwd, 'pdb_clone'))
+                shutil.copyfile(os.path.join(support.SAVEDCWD, 'pdb-clone'),
+                                        os.path.join(cwd, 'pdb-clone'))
                 abstest = self.testdir + '.' + test
                 module = importlib.import_module(abstest)
                 suite = defaultTestLoader.loadTestsFromModule(module)
@@ -123,7 +125,7 @@ distutils.core.setup(
 
     # meta-data
     name='pdb-clone',
-    version='1.1.py2',
+    version='1.1.py2.7',
     description=DESCRIPTION,
     long_description=DESCRIPTION,
     platforms='all',

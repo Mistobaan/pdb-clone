@@ -30,8 +30,7 @@ class PdbTestInput(object):
 
     def __exit__(self, *exc):
         sys.stdin = self.real_stdin
-        if self.orig_trace:
-            sys.settrace(self.orig_trace)
+        sys.settrace(self.orig_trace)
 
 
 def test_pdb_displayhook():
@@ -693,7 +692,7 @@ class PdbTestCase(unittest.TestCase):
         with open(filename, 'w') as f:
             f.write(textwrap.dedent(script))
         self.addCleanup(support.unlink, filename)
-        cmd = [sys.executable, '-m', 'pdb', filename]
+        cmd = [sys.executable, 'pdb-clone', filename]
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                                    stdin=subprocess.PIPE,
                                    stderr=subprocess.PIPE)
@@ -737,7 +736,7 @@ class PdbTestCase(unittest.TestCase):
         self.addCleanup(support.unlink, 'bar.py')
         stdout, stderr = self.run_pdb(script, commands, 'main.py')
         self.assertTrue(
-            any('main.py(5)foo()->None' in l for l in stdout.splitlines()),
+            'main.py(5)foo()->None' in stdout,
             'Fail to step into the caller after a return')
 
     def test_issue14789(self):
