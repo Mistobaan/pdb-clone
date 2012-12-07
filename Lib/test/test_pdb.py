@@ -993,6 +993,37 @@ class IssueTestCase(PdbTestCase):
             'The debugger is still active while the interpreter shuts down.'
              % (error, stderr))
 
+    def test_issue13120(self):
+        # invoking "continue" on a non-main thread triggered an exception
+        # inside signal.signal
+        f = None
+        try:
+            f = open(support.TESTFN, 'wb')
+            f.write(textwrap.dedent("""
+                import threading
+                import pdb
+
+                def start_pdb():
+                    pdb.Pdb().set_trace()
+                    x = 1
+                    y = 1
+
+                t = threading.Thread(target=start_pdb)
+                t.start()"""))
+        finally:
+            if f:
+                f.close()
+        cmd = [sys.executable, '-u', support.TESTFN]
+        proc = subprocess.Popen(cmd,
+            stdout=subprocess.PIPE,
+            stdin=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            )
+        self.addCleanup(proc.stdout.close)
+        stdout, stderr = proc.communicate('cont\n')
+        self.assertTrue('Error' not in stdout,
+                         "Got an error running test script under PDB")
+
     def tearDown(self):
         unlink(support.TESTFN)
 
