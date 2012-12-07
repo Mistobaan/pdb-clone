@@ -886,6 +886,36 @@ class PdbTestCase(unittest.TestCase):
             'Fail to handle a syntax error in the debuggee.'
             .format(expected, stderr))
 
+    def test_issue13120(self):
+        # invoking "continue" on a non-main thread triggered an exception
+        # inside signal.signal
+
+        # raises SkipTest if python was built without threads
+        support.import_module('threading')
+
+        with open(support.TESTFN, 'wb') as f:
+            f.write(textwrap.dedent("""
+                import threading
+                import pdb
+
+                def start_pdb():
+                    pdb.Pdb().set_trace()
+                    x = 1
+                    y = 1
+
+                t = threading.Thread(target=start_pdb)
+                t.start()""").encode('ascii'))
+        cmd = [sys.executable, '-u', support.TESTFN]
+        proc = subprocess.Popen(cmd,
+            stdout=subprocess.PIPE,
+            stdin=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            )
+        self.addCleanup(proc.stdout.close)
+        stdout, stderr = proc.communicate(b'cont\n')
+        self.assertNotIn('Error', stdout.decode(),
+                         "Got an error running test script under PDB")
+
     def tearDown(self):
         support.unlink(support.TESTFN)
 
