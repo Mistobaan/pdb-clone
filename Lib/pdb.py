@@ -1229,7 +1229,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
             first = self.lineno + 1
         if last is None:
             last = first + 10
-        filename = bdb.canonic(self.curframe.f_code.co_filename)
+        filename = self.curframe.f_code.co_filename
         breaklist = self.get_file_breaks(filename)
         try:
             lines = linecache.getlines(filename, self.curframe.f_globals)
@@ -1511,7 +1511,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
                                   "__builtins__": __builtins__,
                                  })
 
-        self.mainpyfile = bdb.canonic(filename)
+        self.mainpyfile = filename
         self._user_requested_quit = False
         with open(filename, "rb") as fp:
             content = fp.read()
