@@ -13,9 +13,9 @@ import shutil
 from bisect import bisect
 from operator import attrgetter
 try:
-    from _bdb import BdbTracer
+    import _bdb
 except ImportError:
-    BdbTracer = None
+    _bdb = None
 
 __all__ = ["BdbQuit", "Bdb", "Breakpoint"]
 
@@ -151,6 +151,50 @@ class BdbSyntaxError(BdbError):
 
 class BdbQuit(BdbException):
     """Exception to give up completely."""
+
+class IntegersCache:
+    """Cache integers in a list.
+
+    The list is used by the _bdb.BdbTracer instance to avoid allocating a
+    PyLongObject for each line when trying to find if the line number matches a
+    breakpoint line number.
+
+    """
+    def __init__(self, cache):
+        self.cache = cache
+        self.refs = []
+        self.len = 0
+
+    def add(self, i):
+        if i >= self.len:
+            inc = i - self.len + 1
+            self.cache.extend(itertools.repeat(None, inc))
+            self.refs.extend(itertools.repeat(0, inc))
+            self.len = i + 1
+        self.cache[i] = i
+        self.refs[i] += 1
+        return i
+
+    def delete(self, i):
+        if i < self.len and self.cache[i] is not None:
+            self.refs[i] -= 1
+            if not self.refs[i]:
+                self.cache[i] = None
+                # Pack the end of the list.
+                if i == self.len - 1:
+                    for j in range(i, -1, -1):
+                        if self.cache[j] is not None:
+                            break
+                    else:
+                        j = -1
+                    self.cache[:] = self.cache[:j-i]
+                    self.refs[:] = self.refs[:j-i]
+                    self.len -= i - j
+            return i
+        return None
+
+    def __repr__(self):
+        return '\n'.join((str(self.cache), str(self.refs), str(self.len)))
 
 class BdbModule:
     """A module.
@@ -299,20 +343,21 @@ class BdbModule:
 class ModuleBreakpoints(dict):
     """The breakpoints of a module.
 
-    A dictionary that maps a code firstlineno to a 'line_bps' dictionary that
+    A dictionary that maps a code firstlineno to a 'code_bps' dictionary that
     maps each line number of the code, where one or more breakpoints are set,
     to the list of corresponding Breakpoint instances.
 
     Note:
-    A line in 'line_bps' is the actual line of the breakpoint (the line where the
+    A line in 'code_bps' is the actual line of the breakpoint (the line where the
     debugger stops), this line may differ from the line attribute of the
     Breakpoint instance as set by the user.
     """
 
-    def __init__(self, filename):
+    def __init__(self, filename, lineno_cache):
         if filename not in _modules:
             _modules[filename] = BdbModule(filename)
         self.bdb_module = _modules[filename]
+        self.lineno_cache = lineno_cache
 
     def reset(self):
         try:
@@ -332,26 +377,34 @@ class ModuleBreakpoints(dict):
         firstlineno, actual_lno = self.bdb_module.get_actual_bp(bp.line)
         if firstlineno not in self:
             self[firstlineno] = {}
-        line_bps = self[firstlineno]
-        if actual_lno not in line_bps:
-            line_bps[actual_lno] = []
-        line_bps[actual_lno].append(bp)
+            self.lineno_cache.add(firstlineno)
+        code_bps = self[firstlineno]
+        if actual_lno not in code_bps:
+            code_bps[actual_lno] = []
+            self.lineno_cache.add(actual_lno)
+        code_bps[actual_lno].append(bp)
         return firstlineno, actual_lno
 
     def delete_breakpoint(self, bp):
         firstlineno, actual_lno = bp.actual_bp
         try:
-            line_bps = self[firstlineno]
-            bplist = line_bps[actual_lno]
+            code_bps = self[firstlineno]
+            bplist = code_bps[actual_lno]
             bplist.remove(bp)
         except (KeyError, ValueError):
             # This may occur after a reset and the breakpoint could not be
             # added anymore.
             return
         if not bplist:
-            del line_bps[actual_lno]
-        if not line_bps:
-            del self[firstlineno]
+            del code_bps[actual_lno]
+            self.lineno_cache.delete(actual_lno)
+        if not code_bps:
+            # DO NOT delete the code_bps dictionary even though it is empty.
+            # The _bdb extension module may be holding a reference to this
+            # dictionary while tracing this function and in this case, a new
+            # breakpoint added to the function must be refered to by this same
+            # code_bps.
+            self.lineno_cache.delete(firstlineno)
 
     def get_breakpoints(self, lineno):
         """Return the list of breakpoints set at lineno."""
@@ -361,44 +414,48 @@ class ModuleBreakpoints(dict):
             return []
         if firstlineno not in self:
             return []
-        line_bps = self[firstlineno]
-        if actual_lno not in line_bps:
+        code_bps = self[firstlineno]
+        if actual_lno not in code_bps:
             return []
-        return [bp for bp in sorted(line_bps[actual_lno],
+        return [bp for bp in sorted(code_bps[actual_lno],
                     key=attrgetter('number')) if bp.line == lineno]
 
     def all_breakpoints(self):
         bpts = []
-        for line_bps in self.values():
-            for bplist in line_bps.values():
+        for code_bps in self.values():
+            for bplist in code_bps.values():
                 bpts.extend(bplist)
         return [bp for bp in sorted(bpts, key=attrgetter('number'))]
 
 class Tracer:
     """Python implementation of _bdb.BdbTracer type.
 
-    The 'stopframe_lno' attribute is a tuple of (stopframe, lineno) where:
-        'stopframe' is the frame where the debugger must stop. With a value of
-        None, it means stop at any frame. When not None, the debugger stops at
-        the 'return' debug event in that frame, whatever the value of 'lineno'.
+    Attributes:
+        stopframe: The frame where the debugger must stop. When None, the
+        debugger may stop at any frame depending on the value of stop_lineno.
+        When not None, the debugger stops at the 'return' debug event in that
+        frame, whatever the value of stop_lineno.
 
-        The debugger stops when the current line number in 'stopframe' is
-        greater or equal to 'lineno'. The value of -1 means the infinite line
-        number, i.e. don't stop.
+        stop_lineno: The debugger stops when the current line number in the
+        stopframe frame is greater or equal to stop_lineno. A value of -1 for
+        stop_lineno means the infinite line number, i.e. don't stop.
 
-        Therefore:
+        Therefore the following values of (self.stopframe, self.stop_lineno)
+        mean:
             (None, 0):   always stop
             (None, -1):  never stop
             (frame, 0):  stop on next statement in that frame
             (frame, -1): stop when returning from frame
     """
 
-    def __init__(self, to_lowercase, skip_modules=None, skip_calls=None):
+    def __init__(self, to_lowercase, skip_modules=(), skip_calls=()):
         self.to_lowercase = to_lowercase
         self.skip_modules = skip_modules
         self.skip_calls = skip_calls
         # A dictionary mapping filenames to a ModuleBreakpoints instances.
         self.breakpoints = {}
+        # The list of line numbers used to improve _bdb performance.
+        self.linenumbers = []
         self.reset()
 
     def reset(self, ignore_first_call_event=True, botframe=None):
@@ -407,7 +464,8 @@ class Tracer:
         self.quitting = False
         self.topframe = None
         self.topframe_locals = None
-        self.stopframe_lno = (None, 0)
+        self.stopframe = None
+        self.stop_lineno = 0
 
     def trace_dispatch(self, frame, event, arg):
         if event == 'line':
@@ -424,26 +482,28 @@ class Tracer:
                 return self.trace_dispatch
             if frame.f_code in self.skip_calls:
                 return # None
-            if not (self.stop_here(frame) or self.bkpt_in_code(frame)):
+            stop_here = self.stop_here(frame)
+            if not (stop_here or self.bkpt_in_code(frame)):
                 # No need to trace this function.
                 return # None
-            if self.stop_here(frame):
+            if stop_here:
                 return self.user_method(frame, self.user_call, arg)
             # A breakpoint is set in this function.
             return self.trace_dispatch
 
         elif event == 'return':
-            if self.stop_here(frame) or frame is self.stopframe_lno[0]:
+            if self.stop_here(frame) or frame is self.stopframe:
                 if not self.user_method(frame, self.user_return, arg):
                     return None
                 # Set the trace function in the caller when returning from the
                 # current frame after step, next, until, return commands.
                 if (frame is not self.botframe and
-                        (self.stopframe_lno == (None, 0) or
-                                        frame is self.stopframe_lno[0])):
+                        ((self.stopframe is None and self.stop_lineno == 0) or
+                                        frame is self.stopframe)):
                     if frame.f_back and not frame.f_back.f_trace:
                         frame.f_back.f_trace = self.trace_dispatch
-                    self.stopframe_lno = (None, 0)
+                    self.stopframe = None
+                    self.stop_lineno = 0
             if frame is self.botframe:
                 self.stop_tracing()
                 return None
@@ -457,17 +517,16 @@ class Tracer:
     def stop_here(self, frame):
         if self.skip_modules and self.is_skipped_module(frame):
             return False
-        stopframe, lineno = self.stopframe_lno
-        if frame is stopframe or not stopframe:
-            if lineno == -1:
+        if frame is self.stopframe or self.stopframe is None:
+            if self.stop_lineno == -1:
                 return False
-            return frame.f_lineno >= lineno
+            return frame.f_lineno >= self.stop_lineno
 
     def bkpt_at_line(self, frame):
         filename = (frame.f_code.co_filename if not self.to_lowercase
                     else frame.f_code.co_filename.lower())
         if filename not in self.breakpoints:
-            return False
+            return # None
         module_bps = self.breakpoints[filename]
         firstlineno = frame.f_code.co_firstlineno
         if (firstlineno in module_bps and
@@ -493,8 +552,7 @@ class Tracer:
         self.topframe_locals = None
         return self.get_traceobj()
 
-if not BdbTracer:
-    BdbTracer = Tracer
+BdbTracer = _bdb.BdbTracer if _bdb else Tracer
 
 class Bdb(BdbTracer):
     """Generic Python debugger base class.
@@ -505,11 +563,11 @@ class Bdb(BdbTracer):
     """
 
     def __init__(self, skip=None):
-        Tracer.__init__(self,
-                        not _casesensitive_fs,
-                        set(skip) if skip else None,
-                        (ModuleFinder.__call__.__code__,
-                           ModuleFinder.find_module.__code__))
+        skip_modules = tuple(skip) if skip else ()
+        skip_calls = (ModuleFinder.__call__.__code__,
+                      ModuleFinder.find_module.__code__)
+        BdbTracer.__init__(self, not _casesensitive_fs, skip_modules, skip_calls)
+        self.lineno_cache = IntegersCache(self.linenumbers)
 
     # Backward compatibility.
     def canonic(self, filename):
@@ -546,10 +604,9 @@ class Bdb(BdbTracer):
                 return True
         return False
 
-    def _set_stopinfo(self, stopframe_lno):
+    def _set_stopinfo(self, stopframe, stop_lineno):
         # Ensure that stopframe belongs to the stack frame in the interval
         # [self.botframe, self.topframe] and that it gets a trace function.
-        stopframe, lineno = stopframe_lno
         frame = self.topframe
         while stopframe and frame and frame is not stopframe:
             if frame is self.botframe:
@@ -558,7 +615,8 @@ class Bdb(BdbTracer):
             frame = frame.f_back
         if stopframe and not stopframe.f_trace:
             stopframe.f_trace = self.trace_dispatch
-        self.stopframe_lno = stopframe, lineno
+        self.stopframe = stopframe
+        self.stop_lineno = stop_lineno
 
     def bkpt_user_line(self, frame, module_bps):
         # Handle multiple breakpoints on the same line (issue 14789)
@@ -598,19 +656,19 @@ class Bdb(BdbTracer):
         when returning from frame."""
         if lineno is None:
             lineno = frame.f_lineno + 1
-        self._set_stopinfo((frame, lineno))
+        self._set_stopinfo(frame, lineno)
 
     def set_step(self):
         """Stop after one line of code."""
-        self._set_stopinfo((None, 0))
+        self._set_stopinfo(None, 0)
 
     def set_next(self, frame):
         """Stop on the next line in or below the given frame."""
-        self._set_stopinfo((frame, 0))
+        self._set_stopinfo(frame, 0)
 
     def set_return(self, frame):
         """Stop when returning from the given frame."""
-        self._set_stopinfo((frame, -1))
+        self._set_stopinfo(frame, -1)
 
     def set_trace(self, frame=None):
         """Start debugging from `frame`.
@@ -639,7 +697,10 @@ class Bdb(BdbTracer):
             # Must trace the bottom frame to disable tracing on termination,
             # see issue 13044.
             self.botframe.f_trace = self.trace_dispatch
-        sys.settrace(self.trace_dispatch)
+        if _bdb:
+            self.set_trace_dispatch()
+        else:
+            sys.settrace(self.trace_dispatch)
 
     def get_traceobj(self):
         # Do not raise BdbQuit when debugging is started with set_trace.
@@ -649,11 +710,14 @@ class Bdb(BdbTracer):
         # issues 16482 and 7238.
         if not sys.gettrace():
             return None
-        return self.trace_dispatch
+        if _bdb:
+            return self
+        else:
+            return self.trace_dispatch
 
     def set_continue(self):
         # Don't stop except at breakpoints or when finished.
-        self._set_stopinfo((None, -1))
+        self._set_stopinfo(None, -1)
         if not self.has_breaks():
             # No breakpoints; run without debugger overhead.
             self.stop_tracing()
@@ -698,7 +762,7 @@ class Bdb(BdbTracer):
                   funcname=None):
         filename = canonic(fname)
         if filename not in self.breakpoints:
-            module_bps = ModuleBreakpoints(filename)
+            module_bps = ModuleBreakpoints(filename, self.lineno_cache)
         else:
             module_bps = self.breakpoints[filename]
         if funcname:
@@ -839,7 +903,10 @@ class Bdb(BdbTracer):
         self.reset()
         if isinstance(cmd, str):
             cmd = compile(cmd, "<string>", "exec")
-        sys.settrace(self.trace_dispatch)
+        if _bdb:
+            self.set_trace_dispatch()
+        else:
+            sys.settrace(self.trace_dispatch)
         try:
             exec(cmd, globals, locals)
         except BdbQuit:
@@ -854,7 +921,10 @@ class Bdb(BdbTracer):
         if locals is None:
             locals = globals
         self.reset()
-        sys.settrace(self.trace_dispatch)
+        if _bdb:
+            self.set_trace_dispatch()
+        else:
+            sys.settrace(self.trace_dispatch)
         try:
             return eval(expr, globals, locals)
         except BdbQuit:
@@ -870,7 +940,10 @@ class Bdb(BdbTracer):
 
     def runcall(self, func, *args, **kwds):
         self.reset(ignore_first_call_event=False)
-        sys.settrace(self.trace_dispatch)
+        if _bdb:
+            self.set_trace_dispatch()
+        else:
+            sys.settrace(self.trace_dispatch)
         res = None
         try:
             res = func(*args, **kwds)

@@ -12,6 +12,8 @@ from distutils.command.sdist import sdist as _sdist
 from distutils.command.build_scripts import build_scripts as _build_scripts
 from unittest import defaultTestLoader
 
+from pdb_clone import __version__
+
 DESCRIPTION = 'A clone of pdb, the standard library python debugger.'
 SCRIPTS = ['pdb-clone']
 
@@ -111,17 +113,22 @@ class Test(distutils.core.Command):
         result = 'failed' if failed else 'ok'
         print('{:d} test{} {}.'.format(cnt, plural, result))
 
+_bdb = distutils.core.Extension('_bdb',
+                sources=['pdb_clone/_bdbmodule.c'],
+                optional=True)
+
 distutils.core.setup(
     cmdclass={'sdist': sdist,
               'build_scripts': build_scripts,
               'install': install,
               'test': Test},
     scripts=SCRIPTS,
+    ext_modules = [_bdb],
     packages=['pdb_clone'],
 
     # meta-data
     name='pdb-clone',
-    version='1.2.py3',
+    version=__version__,
     description=DESCRIPTION,
     long_description=DESCRIPTION,
     platforms='all',

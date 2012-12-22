@@ -326,7 +326,7 @@ class SetMethodTestCase(unittest.TestCase):
         _reset_Breakpoint()
 
         self.addCleanup(_reset_Breakpoint)
-        self.addCleanup(sys.settrace, sys.gettrace())
+        self.addCleanup(sys.settrace, None)
         self.addCleanup(bdb._module_finder.close)
 
     def create_module(self, statements, module_name=TEST_MODULE[:-3]):
