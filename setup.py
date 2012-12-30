@@ -11,10 +11,14 @@ import importlib
 import shutil
 import test.test_support as support
 import distutils.core
+from distutils.errors import *
 from distutils.command.install import install as _install
 from distutils.command.sdist import sdist as _sdist
 from distutils.command.build_scripts import build_scripts as _build_scripts
+from distutils.command.build_ext import build_ext as _build_ext
 from unittest import defaultTestLoader
+
+from pdb_clone import __version__
 
 DESCRIPTION = 'A clone of pdb, the standard library python debugger.'
 SCRIPTS = ['pdb-clone']
@@ -43,6 +47,13 @@ class sdist(_sdist):
         return distutils.core.Command.copy_file(self, infile, outfile,
                 preserve_mode=preserve_mode, preserve_times=preserve_times,
                 link=None, level=level)
+
+class build_ext(_build_ext):
+    def run(self):
+        try:
+            _build_ext.run(self)
+        except (CCompilerError, DistutilsError, CompileError):
+            self.warn('\n\n*** Building the _bdb extension failed. ***')
 
 class Test(distutils.core.Command):
     description = 'run the test suite'
@@ -115,17 +126,21 @@ class Test(distutils.core.Command):
         result = 'failed' if failed else 'ok'
         print '{:d} test{} {}.'.format(cnt, plural, result)
 
+_bdb = distutils.core.Extension('_bdb', sources=['pdb_clone/_bdbmodule.c'])
+
 distutils.core.setup(
     cmdclass={'sdist': sdist,
               'build_scripts': build_scripts,
               'install': install,
+              'build_ext': build_ext,
               'test': Test},
     scripts=SCRIPTS,
+    ext_modules = [_bdb],
     packages=['pdb_clone'],
 
     # meta-data
     name='pdb-clone',
-    version='1.2.py2.7',
+    version=__version__,
     description=DESCRIPTION,
     long_description=DESCRIPTION,
     platforms='all',

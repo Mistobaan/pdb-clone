@@ -1093,7 +1093,10 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         self.message("ENTERING RECURSIVE DEBUGGER")
         sys.call_tracing(p.run, (arg, globals, locals))
         self.message("LEAVING RECURSIVE DEBUGGER")
-        sys.settrace(self.trace_dispatch)
+        if bdb._bdb:
+            self.set_trace_dispatch()
+        else:
+            sys.settrace(self.trace_dispatch)
         self.lastcmd = p.lastcmd
 
     complete_debug = _complete_expression
