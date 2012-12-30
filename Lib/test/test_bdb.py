@@ -30,10 +30,10 @@ def until(lineno=None):
     return 'until', (lineno, )
 
 def break_lineno(lineno, fname=__file__):
-    return 'break', (bdb.canonic(fname), lineno)
+    return 'break', (fname, lineno)
 
 def break_func(funcname, fname=__file__):
-    return 'break', (bdb.canonic(fname), None, False, None, funcname)
+    return 'break', (fname, None, False, None, funcname)
 
 def ignore(bpnum):
     return 'ignore', (bpnum, )
@@ -45,7 +45,7 @@ def disable(bpnum):
     return 'disable', (bpnum, )
 
 def clear(lineno, fname=__file__):
-    return 'clear', (bdb.canonic(fname), lineno)
+    return 'clear', (fname, lineno)
 
 def _reset_Breakpoint():
     bdb.Breakpoint.next = 1
@@ -94,7 +94,8 @@ class BdbTest(bdb.Bdb):
 
     def lno_rel2abs(self, fname, lineno):
         return (self.frame.f_code.co_firstlineno + lineno - 1
-            if (lineno and fname == bdb.canonic(__file__)) else lineno)
+            if (lineno and bdb.canonic(fname) == bdb.canonic(__file__))
+            else lineno)
 
     def lno_abs2rel(self):
         fname = bdb.canonic(self.frame.f_code.co_filename)
@@ -124,8 +125,7 @@ class BdbTest(bdb.Bdb):
         elif set_type in ('next', 'return'):
             set_method(self.frame)
         elif set_type == 'until' and args:
-            fname = bdb.canonic(self.frame.f_code.co_filename)
-            lineno = self.lno_rel2abs(fname, args[0])
+            lineno = self.lno_rel2abs(self.frame.f_code.co_filename, args[0])
             set_method(self.frame, lineno)
         # These methods do not give back control to the debugger.
         elif (args and set_type in ('break', 'clear', 'ignore', 'enable',
@@ -134,7 +134,6 @@ class BdbTest(bdb.Bdb):
                 def unpack_args(x, y, *z):
                     return x, y, z
                 fname, lineno, remain = unpack_args(*args)
-                fname = bdb.canonic(fname)
                 lineno = self.lno_rel2abs(fname, lineno)
                 args = [fname, lineno]
                 args.extend(remain)
