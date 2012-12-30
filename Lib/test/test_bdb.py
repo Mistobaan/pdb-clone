@@ -339,10 +339,7 @@ class SetMethodTestCase(unittest.TestCase):
         _reset_Breakpoint()
 
         self.addCleanup(_reset_Breakpoint)
-        if hasattr(sys, 'gettrace'):
-            self.addCleanup(sys.settrace, sys.gettrace())
-        else:
-            self.addCleanup(sys.settrace, None)
+        self.addCleanup(sys.settrace, None)
 
     def tearDown(self):
         while self._cleanups:

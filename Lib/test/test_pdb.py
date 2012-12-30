@@ -13,7 +13,11 @@ from test import test_support as support
 from test.test_doctest import _FakeInput
 
 # Some unittest tests spawn a new instance of pdb.
-os.environ['PYTHONPATH'] = os.path.abspath('pdb_clone')
+prev_pypath = []
+if 'PYTHONPATH' in os.environ:
+    prev_pypath = [os.environ['PYTHONPATH']]
+os.environ['PYTHONPATH'] = os.pathsep.join(prev_pypath +
+                                           [os.path.abspath('pdb_clone')])
 
 MODULE_CO_NAME = sys._getframe().f_code.co_name
 
@@ -33,14 +37,10 @@ class PdbTestInput(object):
     def __enter__(self):
         self.real_stdin = sys.stdin
         sys.stdin = _FakeInput(self.input)
-        self.orig_trace = None
-        gettrace = getattr(sys, 'gettrace', None)
-        if gettrace:
-            self.orig_trace = gettrace()
 
     def __exit__(self, *exc):
         sys.stdin = self.real_stdin
-        sys.settrace(self.orig_trace)
+        sys.settrace(None)
 
 
 def test_pdb_displayhook():
@@ -864,7 +864,7 @@ class IssueTestCase(PdbTestCase):
         stdout, stderr = self.run_pdb(script, commands, filename)
         stdout = normalize(stdout, filename)
         expected = normalize(expected)
-        self.assertTrue(stdout in expected,
+        self.assertTrue(expected in stdout,
             '\n\nExpected:\n%s\nGot:\n%s\n'
             'Fail to handle two breakpoints set on the same line.' % (
                 expected, stdout))
@@ -900,7 +900,7 @@ class IssueTestCase(PdbTestCase):
             break not_a_function
             quit
         """
-        expected = """
+        expected = ('''
             > main.py(2)%s()
             -> class C:
             *** Bad name: "C".
@@ -916,14 +916,14 @@ class IssueTestCase(PdbTestCase):
             *** Not a function or a built-in: "C.c_foo"
             Breakpoint 4 at main.py:6
             Breakpoint 5 at main.py:9
-            *** Not a function or a built-in: "not_a_function"
-        """ % MODULE_CO_NAME
+            *** Not a function or a built-in: "not_a_function"''' %
+            MODULE_CO_NAME)
         filename = 'main.py'
         stdout, stderr = self.run_pdb(script, commands, filename)
         stdout = normalize(normalize(
                     stdout, 'handlers.py', strip_bp_lnum=True), filename)
         expected = normalize(expected, 'handlers.py', strip_bp_lnum=True)
-        self.assertTrue(stdout in expected,
+        self.assertTrue(expected in stdout,
             '\n\nExpected:\n%s\nGot:\n%s\n'
             'Fail to handle a breakpoint set by function name.'
              % (expected, stdout))
