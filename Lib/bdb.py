@@ -12,6 +12,10 @@ import tempfile
 import shutil
 from bisect import bisect
 from operator import attrgetter
+try:
+    from _bdb import BdbTracer
+except ImportError:
+    BdbTracer = None
 
 __all__ = ["BdbQuit", "Bdb", "Breakpoint"]
 
@@ -322,12 +326,8 @@ class ModuleBreakpoints(dict):
                 bpts.extend(bplist)
         return [bp for bp in sorted(bpts, key=attrgetter('number'))]
 
-class Bdb:
-    """Generic Python debugger base class.
-
-    This class takes care of details of the trace facility;
-    a derived class should implement user interaction.
-    The standard debugger class (pdb.Pdb) is an example.
+class Tracer:
+    """Python implementation of _bdb.BdbTracer type.
 
     The 'stopframe_lno' attribute is a tuple of (stopframe, lineno) where:
         'stopframe' is the frame where the debugger must stop. With a value of
@@ -345,96 +345,137 @@ class Bdb:
             (frame, -1): stop when returning from frame
     """
 
-    def __init__(self, skip=None):
-        self.skip = None
-        if skip:
-            self.skip = set(skip)
-        # A dictionary mapping a filename to a ModuleBreakpoints instance.
+    def __init__(self, to_lowercase, skip_modules=None, skip_calls=None):
+        self.to_lowercase = to_lowercase
+        self.skip_modules = skip_modules
+        self.skip_calls = skip_calls
+        # A dictionary mapping filenames to a ModuleBreakpoints instances.
         self.breakpoints = {}
-        self._reset()
+        self.reset()
 
-    # Backward compatibility.
-    def canonic(self, filename):
-        return canonic(filename)
-
-    def _reset(self, ignore_first_call_event=True, botframe=None):
+    def reset(self, ignore_first_call_event=True, botframe=None):
         self.ignore_first_call_event = ignore_first_call_event
         self.botframe = botframe
         self.quitting = False
         self.topframe = None
-        self.set_step()
+        self.topframe_locals = None
+        self.stopframe_lno = (None, 0)
+
+    def trace_dispatch(self, frame, event, arg):
+        if event == 'line':
+            if self.stop_here(frame):
+                return self.user_method(frame, self.user_line)
+            module_bps = self.bkpt_at_line(frame)
+            if module_bps:
+                return self.user_method(frame, self.bkpt_user_line, module_bps)
+            return self.trace_dispatch
+
+        elif event == 'call':
+            if self.ignore_first_call_event:
+                self.ignore_first_call_event = False
+                return self.trace_dispatch
+            if frame.f_code in self.skip_calls:
+                return # None
+            if not (self.stop_here(frame) or self.bkpt_in_code(frame)):
+                # No need to trace this function.
+                return # None
+            if self.stop_here(frame):
+                return self.user_method(frame, self.user_call, arg)
+            # A breakpoint is set in this function.
+            return self.trace_dispatch
+
+        elif event == 'return':
+            if self.stop_here(frame) or frame is self.stopframe_lno[0]:
+                if not self.user_method(frame, self.user_return, arg):
+                    return None
+                # Set the trace function in the caller when returning from the
+                # current frame after step, next, until, return commands.
+                if (frame is not self.botframe and
+                        (self.stopframe_lno == (None, 0) or
+                                        frame is self.stopframe_lno[0])):
+                    if frame.f_back and not frame.f_back.f_trace:
+                        frame.f_back.f_trace = self.trace_dispatch
+                    self.stopframe_lno = (None, 0)
+            if frame is self.botframe:
+                self.stop_tracing()
+                return None
+            return self.trace_dispatch
+
+        elif event == 'exception':
+            if self.stop_here(frame):
+                return self.user_method(frame, self.user_exception, arg)
+            return self.trace_dispatch
+
+    def stop_here(self, frame):
+        if self.skip_modules and self.is_skipped_module(frame):
+            return False
+        stopframe, lineno = self.stopframe_lno
+        if frame is stopframe or not stopframe:
+            if lineno == -1:
+                return False
+            return frame.f_lineno >= lineno
+
+    def bkpt_at_line(self, frame):
+        if _casesensitive_fs:
+            filename = frame.f_code.co_filename
+        else:
+            filename = frame.f_code.co_filename.lower()
+        if filename not in self.breakpoints:
+            return False
+        module_bps = self.breakpoints[filename]
+        firstlineno = frame.f_code.co_firstlineno
+        if (firstlineno in module_bps and
+                frame.f_lineno in module_bps[firstlineno]):
+            return module_bps
+
+    def bkpt_in_code(self, frame):
+        if _casesensitive_fs:
+            filename = frame.f_code.co_filename
+        else:
+            filename = frame.f_code.co_filename.lower()
+        if (filename in self.breakpoints and
+                frame.f_code.co_firstlineno in self.breakpoints[filename]):
+            return True
+
+    # The following methods are not on the fast path.
+
+    def user_method(self, frame, method, *args, **kwds):
+        if not self.botframe:
+            self.botframe = frame
+        self.topframe = frame
+        self.topframe_locals = None
+        method(frame, *args, **kwds)
+        self.topframe = None
+        self.topframe_locals = None
+        return self.get_traceobj()
+
+if not BdbTracer:
+    BdbTracer = Tracer
+
+class Bdb(BdbTracer):
+    """Generic Python debugger base class.
+
+    This class takes care of details of the trace facility;
+    a derived class should implement user interaction.
+    The standard debugger class (pdb.Pdb) is an example.
+    """
+
+    def __init__(self, skip=None):
+        if skip:
+            skip = set(skip)
+        else:
+            skip = None
+        Tracer.__init__(self, not _casesensitive_fs, skip, ())
+
+    # Backward compatibility.
+    def canonic(self, filename):
+        return canonic(filename)
 
     def restart(self):
         """Restart the debugger after source code changes."""
         linecache.checkcache()
         for module_bpts in self.breakpoints.values():
             module_bpts.reset()
-
-    def trace_dispatch(self, frame, event, arg):
-        if event == 'line':
-            return self.dispatch_line(frame)
-        if event == 'call':
-            return self.dispatch_call(frame, arg)
-        if event == 'return':
-            return self.dispatch_return(frame, arg)
-        if event == 'exception':
-            return self.dispatch_exception(frame, arg)
-        if event == 'c_call':
-            return self.trace_dispatch
-        if event == 'c_exception':
-            return self.trace_dispatch
-        if event == 'c_return':
-            return self.trace_dispatch
-        print 'bdb.Bdb.dispatch: unknown debugging event:', repr(event)
-        return self.trace_dispatch
-
-    def dispatch_line(self, frame):
-        if self.stop_here(frame):
-            self._user_method(frame, 'line')
-            return self._get_trace_function()
-        else:
-            breakpoint_hits = self.break_here(frame)
-            if breakpoint_hits:
-                self._user_method(frame, 'line', breakpoint_hits)
-                return self._get_trace_function()
-        return self.trace_dispatch
-
-    def dispatch_call(self, frame, arg):
-        # XXX 'arg' is no longer used.
-        if self.ignore_first_call_event:
-            self.ignore_first_call_event = False
-            return self.trace_dispatch
-        if not (self.stop_here(frame) or self.break_at_function(frame)):
-            # No need to trace this function.
-            return # None
-        if self.stop_here(frame):
-            self._user_method(frame, 'call', arg)
-            return self._get_trace_function()
-        return self.trace_dispatch
-
-    def dispatch_return(self, frame, arg):
-        if self.stop_here(frame) or frame is self.stopframe_lno[0]:
-            self._user_method(frame, 'return', arg)
-            if not self._get_trace_function():
-                return None
-            # Set the trace function in the caller when returning from the
-            # current frame after step, next, until, return commands.
-            if (frame is not self.botframe and
-                    (self.stopframe_lno == (None, 0) or
-                                    frame is self.stopframe_lno[0])):
-                if frame.f_back and not frame.f_back.f_trace:
-                    frame.f_back.f_trace = self.trace_dispatch
-                self._set_stopinfo((None, 0))
-        if frame is self.botframe:
-            self._stop_tracing()
-            return None
-        return self.trace_dispatch
-
-    def dispatch_exception(self, frame, arg):
-        if self.stop_here(frame):
-            self._user_method(frame, 'exception', arg)
-            return self._get_trace_function()
-        return self.trace_dispatch
 
     def get_locals(self, frame):
         # The f_locals dictionary of the top level frame is cached to avoid
@@ -449,98 +490,16 @@ class Bdb:
         # 9633).
         return frame.f_locals
 
-    def _user_method(self, frame, event, *args, **kwds):
-        if not self.botframe:
-            self.botframe = frame
-        self.topframe = frame
-        self.topframe_locals = None
-        method = getattr(self, 'user_' + event)
-        method(frame, *args, **kwds)
-        self.topframe = None
-        self.topframe_locals = None
-
     # Normally derived classes don't override the following
     # methods, but they may if they want to redefine the
     # definition of stopping and breakpoints.
 
-    def is_skipped_module(self, module_name):
-        for pattern in self.skip:
+    def is_skipped_module(self, frame):
+        module_name = frame.f_globals.get('__name__')
+        for pattern in self.skip_modules:
             if fnmatch.fnmatch(module_name, pattern):
                 return True
         return False
-
-    def stop_here(self, frame):
-        if self.skip and \
-               self.is_skipped_module(frame.f_globals.get('__name__')):
-            return False
-        stopframe, lineno = self.stopframe_lno
-        if frame is stopframe or not stopframe:
-            if lineno == -1:
-                return False
-            return frame.f_lineno >= lineno
-        return False
-
-    def break_here(self, frame):
-        if _casesensitive_fs:
-            filename = frame.f_code.co_filename
-        else:
-            filename = frame.f_code.co_filename.lower()
-        if filename not in self.breakpoints:
-            return None
-        module_bps = self.breakpoints[filename]
-        firstlineno = frame.f_code.co_firstlineno
-        if (firstlineno not in module_bps or
-                frame.f_lineno not in module_bps[firstlineno]):
-            return None
-
-        # Handle multiple breakpoints on the same line (issue 14789)
-        effective_bp_list = []
-        temporaries = []
-        for bp in module_bps[firstlineno][frame.f_lineno]:
-            stop, delete = bp.process_hit_event(frame)
-            if stop:
-                effective_bp_list.append(bp.number)
-                if bp.temporary and delete:
-                    temporaries.append(bp.number)
-        if effective_bp_list:
-            return sorted(effective_bp_list), sorted(temporaries)
-
-    def break_at_function(self, frame):
-        if _casesensitive_fs:
-            filename = frame.f_code.co_filename
-        else:
-            filename = frame.f_code.co_filename.lower()
-        if filename not in self.breakpoints:
-            return False
-        if frame.f_code.co_firstlineno in self.breakpoints[filename]:
-            return True
-        return False
-
-    # Derived classes should override the user_* methods
-    # to gain control.
-
-    def user_call(self, frame, argument_list):
-        """This method is called when there is the remote possibility
-        that we ever need to stop in this function."""
-        pass
-
-    def user_line(self, frame, breakpoint_hits=None):
-        """This method is called when we stop or break at this line.
-
-        'breakpoint_hits' is a tuple of the list of breakpoint numbers that
-        have been hit at this line, and of the list of temporaries that must be
-        deleted.
-        """
-        pass
-
-    def user_return(self, frame, return_value):
-        """This method is called when a return trap is set here."""
-        pass
-
-    def user_exception(self, frame, exc_info):
-        """This method is called if an exception occurs,
-        but only if we are to stop at or just below this level."""
-        pass
 
     def _set_stopinfo(self, stopframe_lno):
         # Ensure that stopframe belongs to the stack frame in the interval
@@ -555,6 +514,36 @@ class Bdb:
         if stopframe and not stopframe.f_trace:
             stopframe.f_trace = self.trace_dispatch
         self.stopframe_lno = stopframe, lineno
+
+    def bkpt_user_line(self, frame, module_bps):
+        # Handle multiple breakpoints on the same line (issue 14789)
+        firstlineno = frame.f_code.co_firstlineno
+        effective_bp_list = []
+        temporaries = []
+        for bp in module_bps[firstlineno][frame.f_lineno]:
+            stop, delete = bp.process_hit_event(frame)
+            if stop:
+                effective_bp_list.append(bp.number)
+                if bp.temporary and delete:
+                    temporaries.append(bp.number)
+        if effective_bp_list:
+            self.user_line(frame,
+                           (sorted(effective_bp_list), sorted(temporaries)))
+
+    def stop_tracing(self):
+        # Stop tracing, the thread trace function 'c_tracefunc' is NULL and
+        # thus, call_trampoline() is not called anymore for all debug events:
+        # PyTrace_CALL, PyTrace_RETURN, PyTrace_EXCEPTION and PyTrace_LINE.
+        sys.settrace(None)
+
+        # See PyFrame_GetLineNumber() in Objects/frameobject.c for why the
+        # local trace functions must be deleted.
+        frame = self.topframe
+        while frame:
+            del frame.f_trace
+            if frame is self.botframe:
+                break
+            frame = frame.f_back
 
     # Derived classes and clients can call the following methods
     # to affect the stepping state.
@@ -594,7 +583,7 @@ class Bdb:
 
         # Do not change botframe when the debuggee has been started from an
         # instance of Pdb with one of the family of run methods.
-        self._reset(ignore_first_call_event=False, botframe=self.botframe)
+        self.reset(ignore_first_call_event=False, botframe=self.botframe)
         while frame:
             if frame is self.botframe:
                 break
@@ -607,7 +596,7 @@ class Bdb:
             self.botframe.f_trace = self.trace_dispatch
         sys.settrace(self.trace_dispatch)
 
-    def _get_trace_function(self):
+    def get_traceobj(self):
         # Do not raise BdbQuit when debugging is started with set_trace.
         if self.quitting and self.botframe.f_back:
             raise BdbQuit
@@ -617,31 +606,42 @@ class Bdb:
             return None
         return self.trace_dispatch
 
-    def _stop_tracing(self):
-        # Stop tracing, the thread trace function 'c_tracefunc' is NULL and
-        # thus, call_trampoline() is not called anymore for all debug events:
-        # PyTrace_CALL, PyTrace_RETURN, PyTrace_EXCEPTION and PyTrace_LINE.
-        sys.settrace(None)
-
-        # See PyFrame_GetLineNumber() in Objects/frameobject.c for why the
-        # local trace functions must be deleted.
-        frame = self.topframe
-        while frame:
-            del frame.f_trace
-            if frame is self.botframe:
-                break
-            frame = frame.f_back
-
     def set_continue(self):
         # Don't stop except at breakpoints or when finished.
         self._set_stopinfo((None, -1))
         if not self.has_breaks():
             # No breakpoints; run without debugger overhead.
-            self._stop_tracing()
+            self.stop_tracing()
 
     def set_quit(self):
         self.quitting = True
-        self._stop_tracing()
+        self.stop_tracing()
+
+    # Derived classes should override the user_* methods
+    # to gain control.
+
+    def user_call(self, frame, argument_list):
+        """This method is called when there is the remote possibility
+        that we ever need to stop in this function."""
+        pass
+
+    def user_line(self, frame, breakpoint_hits=None):
+        """This method is called when we stop or break at this line.
+
+        'breakpoint_hits' is a tuple of the list of breakpoint numbers that
+        have been hit at this line, and of the list of temporaries that must be
+        deleted.
+        """
+        pass
+
+    def user_return(self, frame, return_value):
+        """This method is called when a return trap is set here."""
+        pass
+
+    def user_exception(self, frame, exc_info):
+        """This method is called if an exception occurs,
+        but only if we are to stop at or just below this level."""
+        pass
 
     # Derived classes and clients can call the following methods
     # to manipulate breakpoints.  These methods return an
@@ -791,7 +791,7 @@ class Bdb:
             globals = __main__.__dict__
         if locals is None:
             locals = globals
-        self._reset()
+        self.reset()
         if isinstance(cmd, str):
             if not cmd.endswith('\n'):
                 cmd += '\n'
@@ -811,7 +811,7 @@ class Bdb:
             globals = __main__.__dict__
         if locals is None:
             locals = globals
-        self._reset()
+        self.reset()
         sys.settrace(self.trace_dispatch)
         try:
             try:
@@ -828,7 +828,7 @@ class Bdb:
     # This method is more useful to debug a single function call.
 
     def runcall(self, func, *args, **kwds):
-        self._reset(ignore_first_call_event=False)
+        self.reset(ignore_first_call_event=False)
         sys.settrace(self.trace_dispatch)
         res = None
         try:
