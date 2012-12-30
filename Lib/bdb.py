@@ -244,13 +244,12 @@ class BdbModule:
         except StopIteration:
             pass
 
-class ModuleBreakpoints:
+class ModuleBreakpoints(dict):
     """The breakpoints of a module.
 
-    The 'breakpts' attribute is a dictionary that maps a code firstlineno to a
-    'line_bps' dictionary that maps each line number of the code, where one or
-    more breakpoints are set, to the list of corresponding Breakpoint
-    instances.
+    A dictionary that maps a code firstlineno to a 'line_bps' dictionary that
+    maps each line number of the code, where one or more breakpoints are set,
+    to the list of corresponding Breakpoint instances.
 
     Note:
     A line in 'line_bps' is the actual line of the breakpoint (the line where the
@@ -262,7 +261,6 @@ class ModuleBreakpoints:
         if filename not in _modules:
             _modules[filename] = BdbModule(filename)
         self.bdb_module = _modules[filename]
-        self.breakpts = {}
 
     def reset(self):
         try:
@@ -271,7 +269,7 @@ class ModuleBreakpoints:
             do_reset = True
         if do_reset:
             bplist = self.all_breakpoints()
-            self.breakpts = {}
+            self.clear()
             for bp in bplist:
                 try:
                     bp.actual_bp = self.add_breakpoint(bp)
@@ -280,9 +278,9 @@ class ModuleBreakpoints:
 
     def add_breakpoint(self, bp):
         firstlineno, actual_lno = self.bdb_module.get_actual_bp(bp.line)
-        if firstlineno not in self.breakpts:
-            self.breakpts[firstlineno] = {}
-        line_bps = self.breakpts[firstlineno]
+        if firstlineno not in self:
+            self[firstlineno] = {}
+        line_bps = self[firstlineno]
         if actual_lno not in line_bps:
             line_bps[actual_lno] = []
         line_bps[actual_lno].append(bp)
@@ -291,7 +289,7 @@ class ModuleBreakpoints:
     def delete_breakpoint(self, bp):
         firstlineno, actual_lno = bp.actual_bp
         try:
-            line_bps = self.breakpts[firstlineno]
+            line_bps = self[firstlineno]
             bplist = line_bps[actual_lno]
             bplist.remove(bp)
         except (KeyError, ValueError):
@@ -301,7 +299,7 @@ class ModuleBreakpoints:
         if not bplist:
             del line_bps[actual_lno]
         if not line_bps:
-            del self.breakpts[firstlineno]
+            del self[firstlineno]
 
     def get_breakpoints(self, lineno):
         """Return the list of breakpoints set at lineno."""
@@ -309,9 +307,9 @@ class ModuleBreakpoints:
             firstlineno, actual_lno = self.bdb_module.get_actual_bp(lineno)
         except BdbSourceError:
             return []
-        if firstlineno not in self.breakpts:
+        if firstlineno not in self:
             return []
-        line_bps = self.breakpts[firstlineno]
+        line_bps = self[firstlineno]
         if actual_lno not in line_bps:
             return []
         return [bp for bp in sorted(line_bps[actual_lno],
@@ -319,7 +317,7 @@ class ModuleBreakpoints:
 
     def all_breakpoints(self):
         bpts = []
-        for line_bps in self.breakpts.values():
+        for line_bps in self.values():
             for bplist in line_bps.values():
                 bpts.extend(bplist)
         return [bp for bp in sorted(bpts, key=attrgetter('number'))]
@@ -491,14 +489,14 @@ class Bdb:
             return None
         module_bps = self.breakpoints[filename]
         firstlineno = frame.f_code.co_firstlineno
-        if (firstlineno not in module_bps.breakpts or
-                frame.f_lineno not in module_bps.breakpts[firstlineno]):
+        if (firstlineno not in module_bps or
+                frame.f_lineno not in module_bps[firstlineno]):
             return None
 
         # Handle multiple breakpoints on the same line (issue 14789)
         effective_bp_list = []
         temporaries = []
-        for bp in module_bps.breakpts[firstlineno][frame.f_lineno]:
+        for bp in module_bps[firstlineno][frame.f_lineno]:
             stop, delete = bp.process_hit_event(frame)
             if stop:
                 effective_bp_list.append(bp.number)
@@ -514,7 +512,7 @@ class Bdb:
             filename = frame.f_code.co_filename.lower()
         if filename not in self.breakpoints:
             return False
-        if frame.f_code.co_firstlineno in self.breakpoints[filename].breakpts:
+        if frame.f_code.co_firstlineno in self.breakpoints[filename]:
             return True
         return False
 
@@ -733,7 +731,7 @@ class Bdb:
 
     def has_breaks(self):
         return bool([f for f in self.breakpoints
-                        if self.breakpoints[f].breakpts.keys()])
+                        if self.breakpoints[f].keys()])
 
     # Derived classes and clients can call the following method
     # to get a data structure representing a stack trace.
