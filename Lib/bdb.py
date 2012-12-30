@@ -8,24 +8,61 @@ import token
 import tokenize
 import itertools
 import types
+import tempfile
+import shutil
 from bisect import bisect
 from operator import attrgetter
 
 __all__ = ["BdbQuit", "Bdb", "Breakpoint"]
 
+def case_sensitive_file_system():
+    tmpdir = None
+    f = None
+    try:
+        tmpdir = tempfile.mkdtemp()
+        one = os.path.join(tmpdir, 'one')
+        ONE = os.path.join(tmpdir, 'ONE')
+        f = open(one, 'w')
+        f.write('one')
+        f.close()
+        f = open(ONE, 'w')
+        f.write('ONE')
+        f.close()
+        f = open(one)
+        if f.read() == 'ONE':
+            return False
+    finally:
+        if f:
+            f.close()
+        if tmpdir:
+            shutil.rmtree(tmpdir)
+    return True
+
 # A dictionary mapping a filename to a BdbModule instance.
 _modules = {}
-_fncache = {}
+_casesensitive_fs = case_sensitive_file_system()
+
+def all_pathnames(abspath):
+    yield abspath
+    cwd = os.getcwd()
+    if abspath.startswith(cwd):
+        relpath = abspath[len(cwd):]
+        if relpath.startswith(os.sep):
+            relpath = relpath[len(os.sep):]
+        if os.path.isfile(relpath):
+            yield relpath
+        relpath = os.path.join('.', relpath)
+        if os.path.isfile(relpath):
+            yield relpath
 
 def canonic(filename):
-    if filename == "<" + filename[1:-1] + ">":
+    if filename[:1] + filename[-1:] == '<>':
         return filename
-    canonic = _fncache.get(filename)
-    if not canonic:
-        canonic = os.path.abspath(filename)
-        canonic = os.path.normcase(canonic)
-        _fncache[filename] = canonic
-    return canonic
+    pathname = os.path.normcase(os.path.abspath(filename))
+    # On Mac OS X, normcase does not convert the path to lower case.
+    if not _casesensitive_fs:
+        pathname = pathname.lower()
+    return pathname
 
 def code_line_numbers(code):
     # Source code line numbers generator (see Objects/lnotab_notes.txt).
@@ -318,7 +355,7 @@ class Bdb:
         self.breakpoints = {}
         self._reset()
 
-        # Backward compatibility
+    # Backward compatibility.
     def canonic(self, filename):
         return canonic(filename)
 
@@ -446,7 +483,10 @@ class Bdb:
         return False
 
     def break_here(self, frame):
-        filename = canonic(frame.f_code.co_filename)
+        if _casesensitive_fs:
+            filename = frame.f_code.co_filename
+        else:
+            filename = frame.f_code.co_filename.lower()
         if filename not in self.breakpoints:
             return None
         module_bps = self.breakpoints[filename]
@@ -468,7 +508,10 @@ class Bdb:
             return sorted(effective_bp_list), sorted(temporaries)
 
     def break_at_function(self, frame):
-        filename = canonic(frame.f_code.co_filename)
+        if _casesensitive_fs:
+            filename = frame.f_code.co_filename
+        else:
+            filename = frame.f_code.co_filename.lower()
         if filename not in self.breakpoints:
             return False
         if frame.f_code.co_firstlineno in self.breakpoints[filename].breakpts:
@@ -619,7 +662,11 @@ class Bdb:
             lineno = module_bps.bdb_module.get_func_lno(funcname)
         bp = Breakpoint(filename, lineno, module_bps, temporary, cond)
         if filename not in self.breakpoints:
-            self.breakpoints[filename] = module_bps
+            # self.breakpoints dictionary maps also the relative path names to
+            # the common ModuleBreakpoints instance (co_filename may be a
+            # relative path name).
+            for pathname in all_pathnames(filename):
+                self.breakpoints[pathname] = module_bps
 
         # Set the trace function when the breakpoint is set in one of the
         # frames of the frame stack.
