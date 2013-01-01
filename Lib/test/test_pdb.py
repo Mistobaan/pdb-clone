@@ -851,12 +851,14 @@ class PdbTestCase(unittest.TestCase):
             *** Not a function or a built-in: "C.c_foo"
             Breakpoint 4 at main.py:6
             Breakpoint 5 at main.py:9
-            *** Not a function or a built-in: "not_a_function"'''
+            *** Not a function or a built-in: "not_a_function"
+            '''
         filename = 'main.py'
         stdout, stderr = self.run_pdb(script, commands, filename)
         stdout = normalize(normalize(
                     stdout, 'handlers.py', strip_bp_lnum=True), filename)
         expected = normalize(expected, 'handlers.py', strip_bp_lnum=True)
+        expected = expected.strip()
         self.assertTrue(expected in stdout,
             '\n\nExpected:\n{}\nGot:\n{}\n'
             'Fail to handle a breakpoint set by function name.'
@@ -914,6 +916,32 @@ class PdbTestCase(unittest.TestCase):
         stdout, stderr = proc.communicate(b'cont\n')
         self.assertNotIn('Error', stdout.decode(),
                          "Got an error running test script under PDB")
+
+    def test_set_bp_by_function_name_after_import(self):
+        # Set breakpoint at function in module after module has been imported.
+        script = """
+            pass
+        """
+        commands = """
+            import asyncore
+            break asyncore.dispatcher.connect
+            quit
+        """
+        expected = """
+            > main.py(2)<module>()
+            -> pass
+            Breakpoint 1 at asyncore.py
+            """
+        filename = 'main.py'
+        stdout, stderr = self.run_pdb(script, commands, filename)
+        stdout = normalize(normalize(
+                    stdout, 'asyncore.py', strip_bp_lnum=True), filename)
+        expected = normalize(expected).strip()
+        self.assertTrue(expected in stdout,
+            '\n\nExpected:\n{}\nGot:\n{}\n'
+            'Fail to set a breakpoint by function name after import.'
+            .format(expected, stdout))
+
 
     def tearDown(self):
         support.unlink(support.TESTFN)
