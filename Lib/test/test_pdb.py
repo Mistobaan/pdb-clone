@@ -916,13 +916,14 @@ class IssueTestCase(PdbTestCase):
             *** Not a function or a built-in: "C.c_foo"
             Breakpoint 4 at main.py:6
             Breakpoint 5 at main.py:9
-            *** Not a function or a built-in: "not_a_function"''' %
-            MODULE_CO_NAME)
+            *** Not a function or a built-in: "not_a_function"
+            ''' % MODULE_CO_NAME)
         filename = 'main.py'
         stdout, stderr = self.run_pdb(script, commands, filename)
         stdout = normalize(normalize(
                     stdout, 'handlers.py', strip_bp_lnum=True), filename)
         expected = normalize(expected, 'handlers.py', strip_bp_lnum=True)
+        expected = expected.strip()
         self.assertTrue(expected in stdout,
             '\n\nExpected:\n%s\nGot:\n%s\n'
             'Fail to handle a breakpoint set by function name.'
@@ -1023,6 +1024,32 @@ class IssueTestCase(PdbTestCase):
         stdout, stderr = proc.communicate('cont\n')
         self.assertTrue('Error' not in stdout,
                          "Got an error running test script under PDB")
+
+    def test_set_bp_by_function_name_after_import(self):
+        # Set breakpoint at function in module after module has been imported.
+        script = """
+            pass
+        """
+        commands = """
+            import asyncore
+            break asyncore.dispatcher.connect
+            quit
+        """
+        expected = ("""
+            > main.py(2)%s()
+            -> pass
+            Breakpoint 1 at asyncore.py
+            """ % MODULE_CO_NAME)
+        filename = 'main.py'
+        stdout, stderr = self.run_pdb(script, commands, filename)
+        stdout = normalize(normalize(
+                    stdout, 'asyncore.py', strip_bp_lnum=True), filename)
+        expected = normalize(expected).strip()
+        self.assertTrue(expected in stdout,
+            '\n\nExpected:\n%s\nGot:\n%s\n'
+            'Fail to set a breakpoint by function name after import.' %
+            (expected, stdout))
+
 
     def tearDown(self):
         unlink(support.TESTFN)

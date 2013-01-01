@@ -190,12 +190,17 @@ def get_fqn_fname(fqn, frame):
                 candidate_tuples.append(('.'.join(names[i:]), filename))
         return candidate_tuples
     else:
-        try:
-            filename = inspect.getfile(func)
-        except TypeError:
-            return []
-        return [(fqn, filename)]
-
+        module_name = getattr(func, '__module__', None)
+        if module_name is not None:
+            try:
+                filename = inspect.getfile(func)
+            except TypeError:
+                pass
+            else:
+                if fqn.startswith(module_name) and module_name != fqn:
+                    fqn = fqn[len(module_name)+1:]
+                return [(fqn, filename)]
+    return []
 
 class _rstr(str):
     """String that doesn't quote its repr."""
