@@ -1,1 +1,1 @@
-__version__ =  '1.2.py3'
+__version__ =  '1.3.py3'
