@@ -728,11 +728,12 @@ class Bdb(BdbTracer):
         if funcname:
             lineno = module_bps.bdb_module.get_func_lno(funcname)
         bp = Breakpoint(filename, lineno, module_bps, temporary, cond)
+        filename_paths = list(all_pathnames(filename))
         if filename not in self.breakpoints:
             # self.breakpoints dictionary maps also the relative path names to
             # the common ModuleBreakpoints instance (co_filename may be a
             # relative path name).
-            for pathname in all_pathnames(filename):
+            for pathname in filename_paths:
                 self.breakpoints[pathname] = module_bps
 
         # Set the trace function when the breakpoint is set in one of the
@@ -740,7 +741,7 @@ class Bdb(BdbTracer):
         firstlineno, actual_lno = bp.actual_bp
         frame = self.topframe
         while frame:
-            if (filename == frame.f_code.co_filename and
+            if (frame.f_code.co_filename in filename_paths and
                         firstlineno == frame.f_code.co_firstlineno):
                 if not frame.f_trace:
                     frame.f_trace = self.trace_dispatch
