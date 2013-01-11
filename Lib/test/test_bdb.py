@@ -1353,6 +1353,34 @@ class RunTestCase(SetMethodTestCase):
         import bdb_test_module
         self.bdb_runeval('bdb_test_module.foo()', globals(), locals())
 
+    @unittest.skipIf(sys.platform == 'win32', 'a posix test')
+    def test_set_trace_breakpoint(self):
+        # Check that bdb stops at a breakpoint set in a caller after interrupt.
+        self.create_module("""
+            import os
+            import signal
+
+            def foo():
+                pid = os.getpid()
+                os.kill(pid, signal.SIGINT)
+                lno = 8
+
+            def main():
+                foo()
+                lno = 12
+
+            main()
+        """)
+        self.send_expect = [
+            CONTINUE, ('line', 8, 'foo'),
+            break_lineno(12, TEST_MODULE), (),
+            CONTINUE, ('line', 12, 'main', ({1:1}, [])),
+            QUIT, (),
+        ]
+        self.set_sigint(True)
+        self.addCleanup(self.set_sigint, False)
+        self.runcall(dbg_module)
+
 class IssueTestCase(SetMethodTestCase):
     """Test fixed issues."""
 
