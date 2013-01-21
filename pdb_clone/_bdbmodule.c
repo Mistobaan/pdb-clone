@@ -456,7 +456,7 @@ tracer(PyObject *traceobj, PyFrameObject *frame, int what, PyObject *arg)
 
         if ((PyObject *)frame == self->botframe) {
             result = PyObject_CallMethod((PyObject *)self,
-                                         "stop_tracing", NULL);
+                                         "stop_tracing", "(O)", frame);
             if (result == NULL)
                 goto fail;
             Py_DECREF(result);
@@ -601,8 +601,8 @@ static PyMethodDef BdbTracer_methods[] = {
     {"stop_here", (PyCFunction)BdbTracer_stop_here, METH_VARARGS, NULL},
     {"set_trace_dispatch", (PyCFunction)BdbTracer_set_trace_dispatch,
             METH_NOARGS, NULL},
-    {"stop_tracing", (PyCFunction)BdbTracer_stop_tracing, METH_NOARGS,
-            PyDoc_STR("Method overriden by Bdb.")},
+    {"stop_tracing", (PyCFunction)BdbTracer_stop_tracing,
+            METH_VARARGS | METH_KEYWORDS, PyDoc_STR("Method overriden.")},
     {"is_skipped_module", (PyCFunction)BdbTracer_is_skipped_module,
             METH_VARARGS, PyDoc_STR("Method overriden by Bdb.")},
     {"get_traceobj", (PyCFunction)BdbTracer_get_traceobj, METH_NOARGS,
