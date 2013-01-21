@@ -505,7 +505,7 @@ class Tracer:
                     self.stopframe = None
                     self.stop_lineno = 0
             if frame is self.botframe:
-                self.stop_tracing()
+                self.stop_tracing(frame)
                 return None
             return self.trace_dispatch
 
@@ -633,7 +633,7 @@ class Bdb(BdbTracer):
             self.user_line(frame,
                            (sorted(effective_bp_list), sorted(temporaries)))
 
-    def stop_tracing(self):
+    def stop_tracing(self, frame=None):
         # Stop tracing, the thread trace function 'c_tracefunc' is NULL and
         # thus, call_trampoline() is not called anymore for all debug events:
         # PyTrace_CALL, PyTrace_RETURN, PyTrace_EXCEPTION and PyTrace_LINE.
@@ -641,7 +641,8 @@ class Bdb(BdbTracer):
 
         # See PyFrame_GetLineNumber() in Objects/frameobject.c for why the
         # local trace functions must be deleted.
-        frame = self.topframe
+        if not frame:
+            frame = self.topframe
         while frame:
             del frame.f_trace
             if frame is self.botframe:
@@ -687,6 +688,7 @@ class Bdb(BdbTracer):
         # Do not change botframe when the debuggee has been started from an
         # instance of Pdb with one of the family of run methods.
         self.reset(ignore_first_call_event=False, botframe=self.botframe)
+        self.topframe = frame
         while frame:
             if frame is self.botframe:
                 break
