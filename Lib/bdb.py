@@ -842,8 +842,10 @@ class Bdb(BdbTracer):
         return [bp.line for bp in self.breakpoints[filename].all_breakpoints()]
 
     def has_breaks(self):
-        return any(self.breakpoints[f].keys()
-                        for f in self.breakpoints)
+        # A code_bps dictionary b[f][l] may be empty and does not have empty
+        # bplist values, see ModuleBreakpoints.delete_breakpoint().
+        b = self.breakpoints
+        return any(list(b[f][l].values()) for f in b for l in b[f])
 
     # Derived classes and clients can call the following method
     # to get a data structure representing a stack trace.
