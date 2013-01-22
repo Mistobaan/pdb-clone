@@ -548,11 +548,13 @@ class RunCallTestCase(SetMethodTestCase):
             from test_module_2 import foo
             foo()
             lno = 4
+            lno = 5
         """)
         self.send_expect = [
+            break_lineno(5, TEST_MODULE), (),
             break_func('foo', 'test_module_2.py'), (),
-            CONTINUE, ('line', 3, 'foo', ({1:1}, [])),
-            STEP, ('return', 3, 'foo'),
+            CONTINUE, ('line', 3, 'foo', ({2:1}, [])),
+            NEXT, ('return', 3, 'foo'),
             NEXT, ('line', 4, '<module>'),
             QUIT, (),
         ]
