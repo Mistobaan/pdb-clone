@@ -946,12 +946,15 @@ class PdbTestCase(unittest.TestCase):
         commands = """
             import asyncore
             break asyncore.dispatcher.connect
+            import asyncore as core
+            break core.dispatcher.connect
             quit
         """
         expected = """
             > main.py(2)<module>()
             -> pass
             Breakpoint 1 at asyncore.py
+            Breakpoint 2 at asyncore.py
             """
         filename = 'main.py'
         stdout, stderr = self.run_pdb(script, commands, filename)
