@@ -439,17 +439,16 @@ tracer(PyObject *traceobj, PyFrameObject *frame, int what, PyObject *arg)
                 if (f_back != NULL && f_back->f_trace == NULL) {
                     Py_INCREF(self);
                     f_back->f_trace = (PyObject *)self;
-
-                    tmp = self->stopframe;
-                    Py_INCREF(Py_None);
-                    self->stopframe = Py_None;
-                    Py_DECREF(tmp);
-
-                    tmp = self->stop_lineno;
-                    self->stop_lineno = PyLong_FromLong(0L);
-                    Py_DECREF(tmp);
-
                 }
+
+                tmp = self->stopframe;
+                Py_INCREF(Py_None);
+                self->stopframe = Py_None;
+                Py_DECREF(tmp);
+
+                tmp = self->stop_lineno;
+                self->stop_lineno = PyLong_FromLong(0L);
+                Py_DECREF(tmp);
 
             }
         }
