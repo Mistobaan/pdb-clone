@@ -437,17 +437,16 @@ tracer(PyObject *traceobj, PyFrameObject *frame, int what, PyObject *arg)
                     /* f_lineno must be accurate when f_trace is set. */
                     f_back->f_lineno = PyFrame_GetLineNumber(f_back);
                     f_back->f_trace = (PyObject *)self;
-
-                    tmp = self->stopframe;
-                    Py_INCREF(Py_None);
-                    self->stopframe = Py_None;
-                    Py_DECREF(tmp);
-
-                    tmp = self->stop_lineno;
-                    self->stop_lineno = PyLong_FromLong(0L);
-                    Py_DECREF(tmp);
-
                 }
+
+                tmp = self->stopframe;
+                Py_INCREF(Py_None);
+                self->stopframe = Py_None;
+                Py_DECREF(tmp);
+
+                tmp = self->stop_lineno;
+                self->stop_lineno = PyLong_FromLong(0L);
+                Py_DECREF(tmp);
 
             }
         }
