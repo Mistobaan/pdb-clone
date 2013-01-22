@@ -210,6 +210,13 @@ def get_fqn_fname(fqn, frame):
             except TypeError:
                 pass
             else:
+                # Substitute the module name in fqn, for the case where the
+                # fully qualified name refers to a name defined in an
+                # 'import as' statement.
+                names = fqn.split('.')
+                if len(names) > 1:
+                    names[0] = eval(names[0], frame.f_globals).__name__
+                    fqn = '.'.join(names)
                 if fqn.startswith(module_name) and module_name != fqn:
                     fqn = fqn[len(module_name)+1:]
                 return [(fqn, filename)]
