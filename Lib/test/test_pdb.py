@@ -1033,12 +1033,15 @@ class IssueTestCase(PdbTestCase):
         commands = """
             import asyncore
             break asyncore.dispatcher.connect
+            import asyncore as core
+            break core.dispatcher.connect
             quit
         """
         expected = ("""
             > main.py(2)%s()
             -> pass
             Breakpoint 1 at asyncore.py
+            Breakpoint 2 at asyncore.py
             """ % MODULE_CO_NAME)
         filename = 'main.py'
         stdout, stderr = self.run_pdb(script, commands, filename)
