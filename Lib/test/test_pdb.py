@@ -411,6 +411,7 @@ def test_post_mortem():
     -> test_function_2()
     (Pdb) next
     Exception!
+    --Exception--
     ZeroDivisionError: integer division or modulo by zero
     > <doctest test.test_pdb.test_post_mortem[1]>(3)test_function()
     -> test_function_2()

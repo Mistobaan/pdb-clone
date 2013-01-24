@@ -391,8 +391,8 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         but only if we are to stop at or just below this level."""
         exc_type, exc_value, exc_traceback = exc_info
         frame.f_locals['__exception__'] = exc_type, exc_value
-        self.message(traceback.format_exception_only(exc_type,
-                                                     exc_value)[-1].strip())
+        self.message('--Exception--\n%s' %
+            traceback.format_exception_only(exc_type, exc_value)[-1].strip())
         self.interaction(frame, exc_traceback)
 
     # General interaction function
