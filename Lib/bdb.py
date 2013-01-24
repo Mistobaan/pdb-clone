@@ -819,6 +819,9 @@ class Bdb(BdbTracer):
         stack = []
         if t and t.tb_frame is f:
             t = t.tb_next
+        else:
+            while t and not t.tb_frame is self.botframe:
+                t = t.tb_next
         while f is not None:
             stack.append((f, f.f_lineno))
             if f is self.botframe:
