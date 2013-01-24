@@ -775,6 +775,12 @@ class Pdb(bdb.Bdb, cmd.Cmd):
 
     complete_tbreak = _complete_location
 
+    def done_breakpoint_state(self, bp, state):
+        name = 'Enabled'
+        if not state:
+            name = 'Disabled'
+        self.message('%s %s' % (name, bp))
+
     def do_enable(self, arg):
         """enable bpnumber [bpnumber ...]
         Enables the breakpoints given as a space separated list of
@@ -788,7 +794,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
                 self.error(err)
             else:
                 bp.enable()
-                self.message('Enabled %s' % bp)
+                self.done_breakpoint_state(bp, True)
 
     complete_enable = _complete_bpnumber
 
@@ -808,7 +814,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
                 self.error(err)
             else:
                 bp.disable()
-                self.message('Disabled %s' % bp)
+                self.done_breakpoint_state(bp, False)
 
     complete_disable = _complete_bpnumber
 
@@ -870,6 +876,9 @@ class Pdb(bdb.Bdb, cmd.Cmd):
 
     complete_ignore = _complete_bpnumber
 
+    def done_delete_breakpoint(self, bp):
+        self.message('Deleted %s' % bp)
+
     def do_clear(self, arg):
         """cl(ear) filename:lineno\ncl(ear) [bpnumber [bpnumber...]]
         With a space separated list of breakpoint numbers, clear
@@ -887,7 +896,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
                 bplist = [bp for bp in bdb.Breakpoint.bpbynumber if bp]
                 self.clear_all_breaks()
                 for bp in bplist:
-                    self.message('Deleted %s' % bp)
+                    self.done_delete_breakpoint(bp)
             return
         if ':' in arg:
             # Make sure it works for "clear C:\foo\bar.py:12"
@@ -905,7 +914,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
                 self.error(err)
             else:
                 for bp in bplist:
-                    self.message('Deleted %s' % bp)
+                    self.done_delete_breakpoint(bp)
             return
         numberlist = arg.split()
         for i in numberlist:
@@ -915,7 +924,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
                 self.error(err)
             else:
                 self.clear_bpbynumber(i)
-                self.message('Deleted %s' % bp)
+                self.done_delete_breakpoint(bp)
     do_cl = do_clear # 'c' is already an abbreviation for 'continue'
 
     complete_clear = _complete_location
