@@ -696,9 +696,12 @@ class Bdb(BdbTracer):
             frame = frame.f_back
         else:
             self.botframe = botframe
-            # Must trace the bottom frame to disable tracing on termination,
-            # see issue 13044.
+
+        # Must trace the bottom frame to disable tracing on termination,
+        # see issue 13044.
+        if not self.botframe.f_trace:
             self.botframe.f_trace = self.trace_dispatch
+
         if _bdb:
             self.set_trace_dispatch()
         else:
