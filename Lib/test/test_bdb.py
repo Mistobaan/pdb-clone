@@ -1095,6 +1095,26 @@ class BreakpointTestCase(SetMethodTestCase):
         ]
         self.assertRaises(bdb.BdbError, self.runcall, dbg_foobar)
 
+    def test_clear_bp_set_bp_in_same_function(self):
+        # Check that the reference to the code_bps dictionary has not changed
+        # after the dictionary has been emptied.
+        self.create_module("""
+            def foo():
+                lno = 3
+
+            for i in range(2):
+                foo()
+        """)
+        self.send_expect = [
+            break_lineno(3, TEST_MODULE), (),
+            CONTINUE, ('line', 3, 'foo', ({1:1}, [])),
+            clear(3, TEST_MODULE), (),
+            break_lineno(3, TEST_MODULE), (),
+            CONTINUE, ('line', 3, 'foo', ({2:1}, [])),
+            QUIT, (),
+        ]
+        self.runcall(dbg_module)
+
     def test_restart_new_breakpoint(self):
         # Set a breakpoint on a function, after source code changes and a
         # restart.
@@ -1386,7 +1406,7 @@ class RunTestCase(SetMethodTestCase):
 class IssueTestCase(SetMethodTestCase):
     """Test fixed issues."""
 
-    def test_issue_6322(self):
+    def test_python_issue_6322(self):
         # Set breakpoints on statement lines without bytecode, for example:
         # global, else, finally.
         self.send_expect = [
@@ -1400,7 +1420,7 @@ class IssueTestCase(SetMethodTestCase):
         ]
         self.runcall(dbg_foo)
 
-    def test_issue_14789(self):
+    def test_python_issue_14789(self):
         # Set two breakpoints on the same function.
         self.send_expect = [
             break_func('dbg_foo'), (),
@@ -1410,7 +1430,7 @@ class IssueTestCase(SetMethodTestCase):
         ]
         self.runcall(dbg_foobar)
 
-    def test_issue_14792(self):
+    def test_python_issue_14792(self):
         # Set a breakpoint on a function from within that function and check
         # that the debugger does not stop in the function.
         self.send_expect = [
@@ -1420,7 +1440,7 @@ class IssueTestCase(SetMethodTestCase):
         ]
         self.runcall(dbg_foobar)
 
-    def test_issue_14808(self):
+    def test_python_issue_14808(self):
         # Set a breakpoint on the first line of a function definition.
         self.create_module("""
             def foo():
@@ -1441,7 +1461,7 @@ class IssueTestCase(SetMethodTestCase):
         ]
         self.runcall(dbg_module)
 
-    def test_issue_14795(self):
+    def test_python_issue_14795(self):
         # Set a breakpoint on a method whose class definition has not yet been
         # executed.
         self.create_module("""
@@ -1458,7 +1478,7 @@ class IssueTestCase(SetMethodTestCase):
         ]
         self.runcall(dbg_module)
 
-    def test_issue_14751(self):
+    def test_python_issue_14751(self):
         # Set a breakpoint in the call stack.
         self.create_module("""
             def foo_2():
@@ -1481,7 +1501,7 @@ class IssueTestCase(SetMethodTestCase):
         ]
         self.runcall(dbg_module)
 
-    def test_issue_14743(self):
+    def test_python_issue_14743(self):
         # Check that runcall stops at the call event and that bdb does not step
         # into its own code on returning from the last frame.
         self.send_expect = [
@@ -1491,7 +1511,7 @@ class IssueTestCase(SetMethodTestCase):
         ]
         self.runcall(dbg_bar)
 
-    def test_issue_16446(self):
+    def test_python_issue_16446(self):
         # The quit command ends the debugging session and the program continues
         # its normal execution when the debugging session is started with
         # set_trace.
@@ -1503,7 +1523,7 @@ class IssueTestCase(SetMethodTestCase):
         self.assertFalse(bdb_inst.send_list,
                 'All send_expect sequences have not been processed.')
 
-    def test_issue_14912(self):
+    def test_python_issue_14912(self):
         # Stop at a breakpoint after source code changes and a restart.
         self.create_module("""
             def foo():
@@ -1543,7 +1563,7 @@ class IssueTestCase(SetMethodTestCase):
         ]
         self.restart_runcall(bdb_inst, new_statements, dbg_module)
 
-    def test_issue_16482(self):
+    def test_python_issue_16482(self):
         # Check the frame line number after a 'continue' command while no
         # breakpoints are set.
         self.create_module("""
@@ -1562,4 +1582,22 @@ class IssueTestCase(SetMethodTestCase):
         self.set_skip(('importlib*', '_abcoll', 'os'))
         self.addCleanup(self.set_skip, None)
         self.assertRaises(ValueError, self.runcall, dbg_module)
+
+    def test_pdb_clone_issue_6(self):
+        # Stop at breakpoint set in function after all breakpoints in the
+        # function have been cleared.
+        self.create_module("""
+            def foo():
+                lno = 3
+
+            foo()
+        """)
+        self.send_expect = [
+            break_lineno(3, TEST_MODULE), (),
+            clear(3, TEST_MODULE), (),
+            break_lineno(3, TEST_MODULE), (),
+            CONTINUE, ('line', 3, 'foo', ({2:1}, [])),
+            QUIT, (),
+        ]
+        self.runcall(dbg_module)
 

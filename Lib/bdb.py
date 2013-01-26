@@ -404,7 +404,7 @@ class ModuleBreakpoints(dict):
             # dictionary while tracing this function and in this case, a new
             # breakpoint added to the function must be refered to by this same
             # code_bps.
-            self.lineno_cache.delete(firstlineno)
+            pass
 
     def get_breakpoints(self, lineno):
         """Return the list of breakpoints set at lineno."""
