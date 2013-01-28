@@ -93,6 +93,8 @@ _casesensitive_fs = case_sensitive_file_system()
 def all_pathnames(abspath):
     yield abspath
     cwd = os.getcwd()
+    if not _casesensitive_fs:
+        cwd = cwd.lower()
     if abspath.startswith(cwd):
         relpath = abspath[len(cwd):]
         if relpath.startswith(os.sep):
