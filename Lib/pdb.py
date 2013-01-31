@@ -133,11 +133,6 @@ def get_module_fname(module_name, path=None, inpackage=None):
     if module_name in sys.modules:
         return getattr(sys.modules[module_name], '__file__', None)
 
-    if inpackage is not None:
-        fullmodule = '%s.%s' % (inpackage, module_name)
-    else:
-        fullmodule = module_name
-
     i = module_name.rfind('.')
     if i >= 0:
         package = module_name[:i]
@@ -1500,7 +1495,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         except AttributeError:
             self.error('No help for %r' % arg)
         else:
-            if sys.flags.optimize >= 2:
+            if getattr(sys, 'flags', None) and sys.flags.optimize >= 2:
                 self.error('No help for %r; please do not run Python with -OO '
                            'if you need command help' % arg)
                 return
