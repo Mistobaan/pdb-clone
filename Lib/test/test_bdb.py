@@ -747,6 +747,35 @@ class RunCallTestCase(SetMethodTestCase):
         ]
         self.runcall(dbg_foobar)
 
+    def test_trace_and_profile(self):
+        # Test that the tracer is restored in the caller when the local trace
+        # is set.
+        self.set_skip(('importlib*', '_abcoll', 'os', 'bdb_test_module'))
+        self.addCleanup(self.set_skip, None)
+        self.create_module("""
+            def foo():
+                lno = 3
+        """, 'test_module_2')
+        self.create_module("""
+            from test_module_2 import foo
+            foo()
+        """)
+        self.send_expect = [
+            STEP, ('line', 2, 'dbg_module'),
+            # The next lines execute the test_module_2 module.
+            STEP, ('call', 2, '<module>'),
+            STEP, ('line', 2, '<module>'),
+            STEP, ('return', 2, '<module>'),
+            # Now entering function foo.
+            STEP, ('call', 2, 'foo'),
+            STEP, ('line', 3, 'foo'),
+            STEP, ('return', 3, 'foo'),
+            STEP, ('line', 3, 'dbg_module'),
+            STEP, ('return', 3, 'dbg_module'),
+            STEP, (),
+        ]
+        self.runcall(dbg_module)
+
 class BreakpointTestCase(SetMethodTestCase):
     """Test the breakpoint set method."""
 
