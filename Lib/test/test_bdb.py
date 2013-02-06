@@ -222,6 +222,10 @@ class BdbTest(bdb.Bdb):
         self.get_stack(frame, exc_info[2])
         expect = self.expect('exception')
         if len(expect) > 3:
+            # When the assert fails, the error message never gets through as we
+            # are raising an exception from the debugger, while handling an
+            # user exception. The trace function is removed and we get instead:
+            # 'All send_expect sequences have not been processed.'
             self.test_case.assertIsInstance(exc_info[1], expect[3],
                 'Wrong exception at send_expect item %d, got "%s".'
                  % (self.se_cnt, exc_info))
@@ -769,6 +773,35 @@ class RunCallTestCase(SetMethodTestCase):
             QUIT, (),
         ]
         self.runcall(dbg_foobar)
+
+    def test_trace_and_profile(self):
+        # Test that the tracer is restored in the caller when the local trace
+        # is set.
+        self.set_skip(('importlib*', '_abcoll', 'os', 'bdb_test_module'))
+        self.addCleanup(self.set_skip, None)
+        self.create_module("""
+            def foo():
+                lno = 3
+        """, 'test_module_2')
+        self.create_module("""
+            from test_module_2 import foo
+            foo()
+        """)
+        self.send_expect = [
+            STEP, ('line', 2, 'dbg_module'),
+            # The next lines execute the test_module_2 module.
+            STEP, ('call', 2, '<module>'),
+            STEP, ('line', 2, '<module>'),
+            STEP, ('return', 2, '<module>'),
+            # Now entering function foo.
+            STEP, ('call', 2, 'foo'),
+            STEP, ('line', 3, 'foo'),
+            STEP, ('return', 3, 'foo'),
+            STEP, ('line', 3, 'dbg_module'),
+            STEP, ('return', 3, 'dbg_module'),
+            STEP, (),
+        ]
+        self.runcall(dbg_module)
 
 class BreakpointTestCase(SetMethodTestCase):
     """Test the breakpoint set method."""
