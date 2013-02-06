@@ -574,6 +574,7 @@ def test_pdb_run_with_incorrect_argument():
     Traceback (most recent call last):
     TypeError: exec: arg 1 must be a string, file, or code object
 
+    >>> pti = PdbTestInput(['continue',])
     >>> with pti:
     ...     pdb_invoke('runeval', lambda x: x)
     Traceback (most recent call last):
