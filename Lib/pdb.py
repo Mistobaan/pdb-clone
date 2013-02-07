@@ -333,8 +333,19 @@ class Pdb(bdb.Bdb, cmd.Cmd):
 
     def user_line(self, frame, breakpoint_hits=None):
         """This function is called when we stop or break at this line."""
-        if not breakpoint_hits or self.bp_commands(frame, breakpoint_hits):
+        if not breakpoint_hits:
             self.interaction(frame, None)
+        else:
+            commands_result = self.bp_commands(frame, breakpoint_hits)
+            if not commands_result:
+                self.interaction(frame, None)
+            else:
+                doprompt, silent = commands_result
+                if not silent:
+                    self.print_stack_entry(self.stack[self.curindex])
+                if doprompt:
+                    self._cmdloop()
+                self.forget()
 
     def bp_commands(self, frame, breakpoint_hits):
         """Call every command that was set for the current active breakpoints.
@@ -348,9 +359,10 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         atleast_one_cmd = False
         for bp in effective_bp_list:
             if bp in self.commands:
-                atleast_one_cmd = True
+                if not atleast_one_cmd:
+                    atleast_one_cmd = True
+                    self.setup(frame, None)
                 lastcmd_back = self.lastcmd
-                self.setup(frame, None)
                 for line in self.commands[bp]:
                     self.onecmd(line)
                 self.lastcmd = lastcmd_back
@@ -364,13 +376,8 @@ class Pdb(bdb.Bdb, cmd.Cmd):
             self.do_clear(tmp_to_delete)
 
         if atleast_one_cmd:
-            if not silent:
-                self.print_stack_entry(self.stack[self.curindex])
-            if doprompt:
-                self._cmdloop()
-            self.forget()
-            return
-        return 1
+            return doprompt, silent
+        return None
 
     def user_return(self, frame, return_value):
         """This function is called when a return trap is set here."""
@@ -450,6 +457,8 @@ class Pdb(bdb.Bdb, cmd.Cmd):
                 sys.stdout = save_stdout
                 sys.stdin = save_stdin
                 sys.displayhook = save_displayhook
+        except SystemExit:
+            raise
         except:
             exc_info = sys.exc_info()[:2]
             self.error(traceback.format_exception_only(*exc_info)[-1].strip())
