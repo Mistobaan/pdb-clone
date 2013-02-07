@@ -857,7 +857,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         and the breakpoint is not disabled and any associated
         condition evaluates to true.
         """
-        args = arg.split()
+        args = arg.split(' ', 1)
         try:
             count = int(args[1].strip())
         except:
