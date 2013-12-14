@@ -33,8 +33,13 @@ class ModuleFinder(list):
         return self
 
     def find_module(self, fullname, path=None):
+        # PEP 302
         self.append(fullname)
         return None
+
+    def find_spec(self, fullname, target=None):
+        # PEP 451
+        return self.find_module(fullname)
 
     def reset(self):
         """Remove from sys.modules the modules imported by the debuggee."""
