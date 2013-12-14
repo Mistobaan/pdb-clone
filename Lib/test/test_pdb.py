@@ -785,6 +785,7 @@ class PdbTestCase(unittest.TestCase):
         stdout, stderr = self.run_pdb(script, commands, filename)
         stdout = normalize(stdout, filename)
         expected = normalize(expected)
+        expected = expected.strip()
         self.assertTrue(expected in stdout,
             '\n\nExpected:\n{}\nGot:\n{}\n'
             'Fail to handle two breakpoints set on the same line.'.format(
