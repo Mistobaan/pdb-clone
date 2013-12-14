@@ -1196,15 +1196,13 @@ class Pdb(bdb.Bdb, cmd.Cmd):
             return _rstr('** raised %s **' % err)
 
     def do_p(self, arg):
-        """p(rint) expression
+        """p expression
         Print the value of the expression.
         """
         try:
             self.message(repr(self._getval(arg)))
         except:
             pass
-    # make "print" an alias of "p" since print isn't a Python statement anymore
-    do_print = do_p
 
     def do_pp(self, arg):
         """pp expression
@@ -1426,7 +1424,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         placed in the .pdbrc file):
 
         # Print instance variables (usage "pi classInst")
-        alias pi for k in %1.__dict__.keys(): print "%1.",k,"=",%1.__dict__[k]
+        alias pi for k in %1.__dict__.keys(): print("%1.",k,"=",%1.__dict__[k])
         # Print instance variables in self
         alias ps pi self
         """
@@ -1554,7 +1552,7 @@ if __doc__ is not None:
         'help', 'where', 'down', 'up', 'break', 'tbreak', 'clear', 'disable',
         'enable', 'ignore', 'condition', 'commands', 'step', 'next', 'until',
         'jump', 'return', 'retval', 'run', 'continue', 'list', 'longlist',
-        'args', 'print', 'pp', 'whatis', 'source', 'display', 'undisplay',
+        'args', 'p', 'pp', 'whatis', 'source', 'display', 'undisplay',
         'interact', 'alias', 'unalias', 'debug', 'quit',
     ]
 
