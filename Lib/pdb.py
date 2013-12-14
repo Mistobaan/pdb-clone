@@ -837,6 +837,8 @@ class Pdb(bdb.Bdb, cmd.Cmd):
             cond = None
         try:
             bp = self.get_bpbynumber(args[0].strip())
+        except IndexError:
+            self.error('Breakpoint number expected')
         except ValueError as err:
             self.error(err)
         else:
@@ -864,6 +866,8 @@ class Pdb(bdb.Bdb, cmd.Cmd):
             count = 0
         try:
             bp = self.get_bpbynumber(args[0].strip())
+        except IndexError:
+            self.error('Breakpoint number expected')
         except ValueError as err:
             self.error(err)
         else:
