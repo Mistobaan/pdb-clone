@@ -97,18 +97,11 @@ def find_function(funcname, filename):
     except IOError:
         return None
     # consumer of this info expects the first line to be 1
-    lineno = 1
-    answer = None
-    while True:
-        line = fp.readline()
-        if line == '':
-            break
-        if cre.match(line):
-            answer = funcname, filename, lineno
-            break
-        lineno += 1
-    fp.close()
-    return answer
+    with fp:
+        for lineno, line in enumerate(fp, start=1):
+            if cre.match(line):
+                return funcname, filename, lineno
+    return None
 
 def getsourcelines(obj, locals=None):
     lines, lineno = inspect.findsource(obj)
