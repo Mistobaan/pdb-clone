@@ -3,6 +3,7 @@
 #include "Python.h"
 #include "structmember.h"
 #include "frameobject.h"
+#include "code.h"
 
 /* The trace function receives all the PyTrace_LINE events, even when f_trace
  * is NULL. The interpreter calls _PyCode_CheckLineNumber() for each of these
@@ -359,6 +360,7 @@ static int
 tracer(PyObject *traceobj, PyFrameObject *frame, int what, PyObject *arg)
 {
     BdbTracer *self = (BdbTracer *)traceobj;
+    PyFrameObject *stopframe;
     PyObject *module_bps;
     PyObject *result;
     PyObject *tmp;
@@ -403,12 +405,37 @@ tracer(PyObject *traceobj, PyFrameObject *frame, int what, PyObject *arg)
             goto fin;
 
         case PyTrace_EXCEPTION:
+            assert(PyTuple_Check(arg));
+            assert(PyTuple_GET_SIZE(arg) == 3);
+
             rc = stop_here(self, frame);
             if (rc == -1)
                 goto fail;
             else if (rc) {
-                result = user_method(self, frame, "user_exception", arg);
-                goto fin;
+                /* When stepping with next/until/return in a generator frame,
+                 * skip the internal StopIteration exception (with no
+                 * traceback) triggered by a subiterator run with the 'yield
+                 * from' statement. */
+                if (! (frame->f_code->co_flags & CO_GENERATOR &&
+                        PyTuple_GET_ITEM(arg, 0) == PyExc_StopIteration &&
+                        PyTuple_GET_ITEM(arg, 2) == Py_None)) {
+                    result = user_method(self, frame, "user_exception", arg);
+                    goto fin;
+                }
+            }
+            /* Stop at the StopIteration or GeneratorExit exception when the
+             * user has set stopframe in a generator by issuing a return
+             * command, or a next/until command at the last statement in the
+             * generator before the exception. */
+            else if (self->stopframe != Py_None) {
+                stopframe = (PyFrameObject *)self->stopframe;
+                if (frame != stopframe &&
+                    stopframe->f_code->co_flags & CO_GENERATOR &&
+                    (PyTuple_GET_ITEM(arg, 0) == PyExc_StopIteration ||
+                        PyTuple_GET_ITEM(arg, 0) == PyExc_GeneratorExit)) {
+                    result = user_method(self, frame, "user_exception", arg);
+                    goto fin;
+                }
             }
             break;
 
@@ -431,8 +458,10 @@ fin:
     else {
         Py_DECREF(result);
 #ifdef TRACE_AND_PROFILE
-        /* Lines are not traced in this frame. */
-        if (what == PyTrace_CALL) {
+        /* Lines are not traced in this frame except if frame is stopframe,
+         * which is when we are  re-entering a generator frame where the {next,
+         * until, return} command had been previously issued. */
+        if (what == PyTrace_CALL && (PyObject *)frame != self->stopframe) {
             PyEval_SetProfile(profiler, (PyObject *)self);
             PyEval_SetTrace(NULL, NULL);
         }
@@ -475,8 +504,11 @@ profiler(PyObject *traceobj, PyFrameObject *frame, int what, PyObject *arg)
                 PyEval_SetProfile(NULL, NULL);
                 return -1;
             }
-            /* Need to trace the lines in this frame. */
-            else if (result != Py_None) {
+            /* Need to trace the lines in this frame. When frame is stopframe,
+             * we are  re-entering a generator frame where the {next, until,
+             * return} command had been previously issued. */
+            else if (result != Py_None ||
+                    (PyObject *)frame == self->stopframe) {
                 tmp = frame->f_trace;
                 frame->f_trace = NULL;
                 Py_XDECREF(tmp);
@@ -512,6 +544,7 @@ static PyObject *
 trace_call(BdbTracer *self, PyFrameObject *frame, PyObject *arg)
 {
     PyObject *result;
+    int lineno;
     int rc;
 
     if (self->ignore_first_call_event) {
@@ -537,6 +570,17 @@ trace_call(BdbTracer *self, PyFrameObject *frame, PyObject *arg)
     if (! rc && result == Py_None)
         return result;
     Py_DECREF(result);
+
+    // Ignore call events in generator except when stepping.
+    lineno = PyLong_AsLong(self->stop_lineno);
+    if (lineno == -1 && PyErr_Occurred())
+        return NULL;
+    if (frame->f_code->co_flags & CO_GENERATOR &&
+            (self->stopframe != Py_None || lineno != 0)) {
+        Py_INCREF(self);
+        return (PyObject *)self;
+    }
+
     if (rc)
         return user_method(self, frame, "user_call", arg);
 
@@ -552,17 +596,27 @@ trace_return(BdbTracer *self, PyFrameObject *frame, PyObject *arg)
     PyObject *tmp;
     int lineno;
     int rc;
+    int ignore;
 
     rc = stop_here(self, frame);
     if (rc == -1)
         return NULL;
     if (rc || (PyObject *)frame == self->stopframe) {
-        result = user_method(self, frame, "user_return", arg);
-        if (result == NULL)
+
+        // Ignore return events in generator except when stepping.
+        lineno = PyLong_AsLong(self->stop_lineno);
+        if (lineno == -1 && PyErr_Occurred())
             return NULL;
-        else if (result == Py_None)
-            return Py_None;
-        Py_DECREF(result);
+        ignore = (frame->f_code->co_flags & CO_GENERATOR &&
+                    (self->stopframe != Py_None || lineno != 0));
+        if (! ignore) {
+            result = user_method(self, frame, "user_return", arg);
+            if (result == NULL)
+                return NULL;
+            else if (result == Py_None)
+                return Py_None;
+            Py_DECREF(result);
+        }
 
         lineno = PyLong_AsLong(self->stop_lineno);
         if (lineno == -1 && PyErr_Occurred())
@@ -578,14 +632,16 @@ trace_return(BdbTracer *self, PyFrameObject *frame, PyObject *arg)
                 f_back->f_trace = (PyObject *)self;
             }
 
-            tmp = self->stopframe;
-            Py_INCREF(Py_None);
-            self->stopframe = Py_None;
-            Py_DECREF(tmp);
+            if (! ignore) {
+                tmp = self->stopframe;
+                Py_INCREF(Py_None);
+                self->stopframe = Py_None;
+                Py_DECREF(tmp);
 
-            tmp = self->stop_lineno;
-            self->stop_lineno = PyLong_FromLong(0L);
-            Py_DECREF(tmp);
+                tmp = self->stop_lineno;
+                self->stop_lineno = PyLong_FromLong(0L);
+                Py_DECREF(tmp);
+            }
 
         }
     }

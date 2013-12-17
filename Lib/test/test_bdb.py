@@ -528,9 +528,8 @@ class RunCallTestCase(SetMethodTestCase):
             lno = 5
         """)
         self.send_expect = [
-            break_lineno(5, TEST_MODULE), (),
             break_func('foo', 'test_module_2.py'), (),
-            CONTINUE, ('line', 3, 'foo', ({2:1}, [])),
+            CONTINUE, ('line', 3, 'foo', ({1:1}, [])),
             NEXT, ('return', 3, 'foo'),
             NEXT, ('line', 4, '<module>'),
             QUIT, (),
@@ -773,6 +772,148 @@ class RunCallTestCase(SetMethodTestCase):
             STEP, ('line', 3, 'dbg_module'),
             STEP, ('return', 3, 'dbg_module'),
             STEP, (),
+        ]
+        self.runcall(dbg_module)
+
+    def test_next_command_in_generator(self):
+        self.create_module("""
+            def test_gen():
+                yield 0
+                lno = 4
+                return 123
+
+            it = test_gen()
+            next(it)
+            next(it)
+        """)
+        self.send_expect = [
+            break_func('test_gen', TEST_MODULE), (),
+            CONTINUE, ('line', 3, 'test_gen', ({1:1}, [])),
+            NEXT, ('line', 4, 'test_gen'),
+            QUIT, (),
+        ]
+        self.runcall(dbg_module)
+
+    def test_return_command_in_generator(self):
+        self.create_module("""
+            def test_gen():
+                yield 0
+                lno = 4
+                return 123
+
+            it = test_gen()
+            next(it)
+            next(it)
+            lno = 10
+        """)
+        self.send_expect = [
+            break_func('test_gen', TEST_MODULE), (),
+            CONTINUE, ('line', 3, 'test_gen', ({1:1}, [])),
+            RETURN, ('exception', 9, '<module>', (StopIteration, )),
+            QUIT, (),
+        ]
+        self.runcall(dbg_module)
+
+    def test_until_command_in_generator(self):
+        self.create_module("""
+            def test_gen():
+                yield 0
+                lno = 4
+                return 123
+
+            def foobar():
+                it = test_gen()
+                next(it)
+                next(it)
+
+            def foo():
+                lno = 13
+                foobar()
+
+            foo()
+        """)
+        self.send_expect = [
+            break_func('foo', TEST_MODULE), (),
+            CONTINUE, ('line', 13, 'foo', ({1:1}, [])),
+            STEP, ('line', 14, 'foo'),
+            STEP, ('call', 7, 'foobar'),
+            STEP, ('line', 8, 'foobar'),
+            STEP, ('line', 9, 'foobar'),
+            STEP, ('call', 2, 'test_gen'),
+            ('until', (4, )), ('line', 4, 'test_gen'),
+            QUIT, (),
+        ]
+        self.runcall(dbg_module)
+
+    def test_next_command_in_generator_for_loop(self):
+        self.create_module("""
+            def test_gen():
+                yield 0
+                lno = 4
+                yield 1
+                return 123
+
+            for i in test_gen():
+                lno = 9
+            lno = 10
+        """)
+        self.send_expect = [
+            break_func('test_gen', TEST_MODULE), (),
+            CONTINUE, ('line', 3, 'test_gen', ({1:1}, [])),
+            NEXT, ('line', 4, 'test_gen'),
+            NEXT, ('line', 5, 'test_gen'),
+            NEXT, ('line', 6, 'test_gen'),
+            NEXT, ('exception', 8, '<module>', (StopIteration, )),
+            STEP, ('line', 10, '<module>'),
+            QUIT, (),
+        ]
+        self.runcall(dbg_module)
+
+    def test_next_command_in_generator_with_subiterator(self):
+        self.create_module("""
+            def test_subgen():
+                yield 0
+                return 123
+
+            def test_gen():
+                x = yield from test_subgen()
+                return 456
+
+            for i in test_gen():
+                lno = 11
+            lno = 12
+        """)
+        self.send_expect = [
+            break_func('test_gen', TEST_MODULE), (),
+            CONTINUE, ('line', 7, 'test_gen', ({1:1}, [])),
+            NEXT, ('line', 8, 'test_gen'),
+            NEXT, ('exception', 10, '<module>', (StopIteration, )),
+            STEP, ('line', 12, '<module>'),
+            QUIT, (),
+        ]
+        self.runcall(dbg_module)
+
+    def test_return_command_in_generator_with_subiterator(self):
+        self.create_module("""
+            def test_subgen():
+                yield 0
+                return 123
+
+            def test_gen():
+                x = yield from test_subgen()
+                return 456
+
+            for i in test_gen():
+                lno = 11
+            lno = 12
+        """)
+        self.send_expect = [
+            break_func('test_subgen', TEST_MODULE), (),
+            CONTINUE, ('line', 3, 'test_subgen', ({1:1}, [])),
+            RETURN, ('exception', 7, 'test_gen', (StopIteration, )),
+            RETURN, ('exception', 10, '<module>', (StopIteration, )),
+            STEP, ('line', 12, '<module>'),
+            QUIT, (),
         ]
         self.runcall(dbg_module)
 
