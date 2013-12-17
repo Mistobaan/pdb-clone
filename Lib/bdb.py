@@ -12,6 +12,7 @@ import tempfile
 import shutil
 from bisect import bisect
 from operator import attrgetter
+from inspect import CO_GENERATOR
 try:
     import _bdb
 except ImportError:
@@ -493,6 +494,10 @@ class Tracer:
             if not (stop_here or self.bkpt_in_code(frame)):
                 # No need to trace this function.
                 return # None
+            # Ignore call events in generator except when stepping.
+            if (frame.f_code.co_flags & CO_GENERATOR and
+                    (self.stopframe is not None or self.stop_lineno != 0)):
+                return self.trace_dispatch
             if stop_here:
                 return self.user_method(frame, self.user_call, arg)
             # A breakpoint is set in this function.
@@ -500,7 +505,11 @@ class Tracer:
 
         elif event == 'return':
             if self.stop_here(frame) or frame is self.stopframe:
-                if not self.user_method(frame, self.user_return, arg):
+                # Ignore return events in generator except when stepping.
+                ignore = (frame.f_code.co_flags & CO_GENERATOR and
+                        (self.stopframe is not None or self.stop_lineno != 0))
+                if (not ignore and
+                        not self.user_method(frame, self.user_return, arg)):
                     return None
                 # Set the trace function in the caller when returning from the
                 # current frame after step, next, until, return commands.
@@ -509,8 +518,9 @@ class Tracer:
                                         frame is self.stopframe)):
                     if frame.f_back and not frame.f_back.f_trace:
                         frame.f_back.f_trace = self.trace_dispatch
-                    self.stopframe = None
-                    self.stop_lineno = 0
+                    if not ignore:
+                        self.stopframe = None
+                        self.stop_lineno = 0
             if frame is self.botframe:
                 self.stop_tracing(frame)
                 return None
@@ -518,6 +528,20 @@ class Tracer:
 
         elif event == 'exception':
             if self.stop_here(frame):
+                # When stepping with next/until/return in a generator frame,
+                # skip the internal StopIteration exception (with no
+                # traceback) triggered by a subiterator run with the 'yield
+                # from' statement.
+                if not (frame.f_code.co_flags & CO_GENERATOR
+                        and arg[0] is StopIteration and arg[2] is None):
+                    return self.user_method(frame, self.user_exception, arg)
+            # Stop at the StopIteration or GeneratorExit exception when the
+            # user has set stopframe in a generator by issuing a return
+            # command, or a next/until command at the last statement in the
+            # generator before the exception.
+            elif (self.stopframe and frame is not self.stopframe
+                    and self.stopframe.f_code.co_flags & CO_GENERATOR
+                    and arg[0] in (StopIteration, GeneratorExit)):
                 return self.user_method(frame, self.user_exception, arg)
             return self.trace_dispatch
 

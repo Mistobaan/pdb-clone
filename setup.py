@@ -88,6 +88,7 @@ class Test(distutils.core.Command):
                 abstest = self.testdir + '.' + test
                 module = importlib.import_module(abstest)
                 suite = defaultTestLoader.loadTestsFromModule(module)
+                unittest_count = suite.countTestCases()
                 # Change the module name to allow correct doctest checks.
                 module.__name__ = 'test.' + test
                 print('{}:'.format(abstest))
@@ -103,8 +104,7 @@ class Test(distutils.core.Command):
                 except support.TestFailed as msg:
                     print('test', test, 'failed --', msg)
                 else:
-                    print(result_tmplt.format('unittest',
-                                                    suite.countTestCases()))
+                    print(result_tmplt.format('unittest', unittest_count))
                     if not f:
                         ok += 1
         failed = cnt - ok
