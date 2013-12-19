@@ -960,6 +960,7 @@ class Bdb(BdbTracer):
             pass
         finally:
             self.settrace(False)
+            self.reset()
 
     def runeval(self, expr, globals=None, locals=None):
         if globals is None:
@@ -975,6 +976,7 @@ class Bdb(BdbTracer):
             pass
         finally:
             self.settrace(False)
+            self.reset()
 
     def runctx(self, cmd, globals, locals):
         # B/W compatibility
@@ -992,6 +994,7 @@ class Bdb(BdbTracer):
             pass
         finally:
             self.settrace(False)
+            self.reset()
         return res
 
 
