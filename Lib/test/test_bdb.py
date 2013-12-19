@@ -372,6 +372,10 @@ class SetMethodTestCase(unittest.TestCase):
         self.assertFalse(bdb_inst.send_list,
                 'All send_expect sequences have not been processed.')
 
+        # This is needed to have the search for reference leaks successfull,
+        # why is it needed ?
+        import gc; gc.collect()
+
     def bdb_runeval(self, expr, globals=None, locals=None):
         bdb_inst = BdbTest(self, skip=self.skip, sigint=self.sigint)
         try:

@@ -84,7 +84,6 @@ BdbTracer_init(BdbTracer *self, PyObject *args, PyObject *kwds)
     PyObject *lowercase;
     PyObject *result;
 
-    self->trace_dispatch = NULL;
     self->breakpoints = NULL;
     self->botframe = NULL;
     self->quitting = NULL;
@@ -106,7 +105,7 @@ BdbTracer_init(BdbTracer *self, PyObject *args, PyObject *kwds)
             &PyTuple_Type, &self->skip_calls))
         return -1;
 
-    Py_INCREF(self);
+    /* Use a borrowed reference to avoid a cycle. */
     self->trace_dispatch = (PyObject *)self;
 
     if (lowercase == Py_True) {
@@ -147,7 +146,6 @@ BdbTracer_init(BdbTracer *self, PyObject *args, PyObject *kwds)
     return 0;
 
 fail:
-    Py_XDECREF(self->trace_dispatch);
     Py_XDECREF(self->skip_modules);
     Py_XDECREF(self->skip_calls);
     Py_XDECREF(self->breakpoints);
@@ -159,7 +157,6 @@ fail:
 static void
 BdbTracer_dealloc(BdbTracer *self)
 {
-    Py_XDECREF(self->trace_dispatch);
     Py_XDECREF(self->breakpoints);
     Py_XDECREF(self->botframe);
     Py_XDECREF(self->quitting);
@@ -364,6 +361,12 @@ tracer(PyObject *traceobj, PyFrameObject *frame, int what, PyObject *arg)
     PyObject *tmp;
     int rc;
 
+    /* Prevent the deallocation of 'self' within this function. This may happen
+     * when the user enters the 'continue' command in a 'user_xxx' function and
+     * there are no breakpoints, in that case all references to 'self' by
+     * frame's f_trace are removed. */
+    Py_INCREF(self);
+
     if(what != PyTrace_CALL && frame->f_trace == NULL)
         goto exit;
 
@@ -449,6 +452,7 @@ exit:
         }
     }
 #endif
+    Py_DECREF(self);
     return 0;
 
 fail:
@@ -456,6 +460,7 @@ fail:
     PyEval_SetTrace(NULL, NULL);
     Py_XDECREF(frame->f_trace);
     frame->f_trace = NULL;
+    Py_DECREF(self);
     return -1;
 }
 
