@@ -492,6 +492,13 @@ class Tracer:
                 return # None
             stop_here = self.stop_here(frame)
             if not (stop_here or self.bkpt_in_code(frame)):
+                # When frame is stopframe, we are re-entering a generator
+                # frame where the {next, until, return} command had been
+                # previously issued, so we need to enable tracing in this
+                # function.
+                if (self.stopframe is frame and
+                        frame.f_code.co_flags & CO_GENERATOR):
+                    return self.trace_dispatch
                 # No need to trace this function.
                 return # None
             # Ignore call events in generator except when stepping.

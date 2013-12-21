@@ -464,7 +464,9 @@ fin:
         /* Lines are not traced in this frame except if frame is stopframe,
          * which is when we are  re-entering a generator frame where the {next,
          * until, return} command had been previously issued. */
-        if (what == PyTrace_CALL && (PyObject *)frame != self->stopframe) {
+        if (what == PyTrace_CALL &&
+                ! (frame->f_code->co_flags & CO_GENERATOR
+                        && (PyObject *)frame == self->stopframe)) {
             PyEval_SetProfile(profiler, (PyObject *)self);
             PyEval_SetTrace(NULL, NULL);
         }
@@ -500,10 +502,13 @@ profiler(PyObject *traceobj, PyFrameObject *frame, int what, PyObject *arg)
     BdbTracer *self = (BdbTracer *)traceobj;
     PyObject *result;
     PyObject *tmp;
+    int stop_in_gen;
 
     switch (what) {
         case PyTrace_CALL:
             result = trace_call(self, frame, arg);
+            stop_in_gen = (frame->f_code->co_flags & CO_GENERATOR &&
+                                    (PyObject *)frame == self->stopframe);
             if (result == NULL) {
                 PyTraceBack_Here(frame);
                 PyEval_SetProfile(NULL, NULL);
@@ -512,8 +517,12 @@ profiler(PyObject *traceobj, PyFrameObject *frame, int what, PyObject *arg)
             /* Need to trace the lines in this frame. When frame is stopframe,
              * we are  re-entering a generator frame where the {next, until,
              * return} command had been previously issued. */
-            else if (result != Py_None ||
-                    (PyObject *)frame == self->stopframe) {
+            else if (result != Py_None || stop_in_gen) {
+                if (stop_in_gen) {
+                    Py_DECREF(result);
+                    Py_INCREF(self);
+                    result = (PyObject *)self;
+                }
                 tmp = frame->f_trace;
                 frame->f_trace = NULL;
                 Py_XDECREF(tmp);
@@ -572,8 +581,18 @@ trace_call(BdbTracer *self, PyFrameObject *frame, PyObject *arg)
     result = bkpt_in_code(self, frame);
     if (result == NULL)
         return NULL;
-    if (! rc && result == Py_None)
+    if (! rc && result == Py_None) {
+        /* When frame is stopframe, we are  re-entering a generator
+         frame where the {next, until, return} command had been previously
+         issued, so we need to enable tracing in this function. */
+        if (frame->f_code->co_flags & CO_GENERATOR &&
+                            (PyObject *)frame == self->stopframe) {
+            Py_DECREF(result);
+            Py_INCREF(self);
+            return (PyObject *)self;
+        }
         return result;
+    }
     Py_DECREF(result);
 
     // Ignore call events in generator except when stepping.
