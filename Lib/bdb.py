@@ -4,8 +4,7 @@ import fnmatch
 import sys
 import os
 import linecache
-import token
-import tokenize
+import ast
 import itertools
 import types
 import tempfile
@@ -134,17 +133,6 @@ def code_line_numbers(code):
             valid_lno = lno
             yield valid_lno
 
-def reiterate(it):
-    """Iterator wrapper allowing to reiterate on items with send()."""
-    while True:
-        item = next(it)
-        val = (yield item)
-        # Reiterate while the sent value is true.
-        while val:
-            # The return value of send().
-            yield item
-            val = (yield item)
-
 class BdbException(Exception):
     """A bdb exception."""
 
@@ -222,12 +210,13 @@ class BdbModule:
                 id(linecache.cache[self.filename]) != id(self.linecache)):
             self.functions_firstlno = None
             self.code = None
-            self.source_lines = linecache.getlines(self.filename)
-            if not self.source_lines:
+            lines = ''.join(linecache.getlines(self.filename))
+            if not lines:
                 raise BdbSourceError('No lines in {}.'.format(self.filename))
             try:
-                self.code = compile(''.join(self.source_lines),
-                                                self.filename, 'exec')
+                self.code = compile(lines, self.filename, 'exec')
+                self.node = compile(lines, self.filename, 'exec',
+                                                    ast.PyCF_ONLY_AST)
             except (SyntaxError, TypeError) as err:
                 raise BdbSyntaxError('{}: {}.'.format(self.filename, err))
             # At this point we still need to test for self.filename in
@@ -242,10 +231,31 @@ class BdbModule:
 
     def get_func_lno(self, funcname):
         """The first line number of the last defined 'funcname' function."""
+
+        class FuncLineno(ast.NodeVisitor):
+            def __init__(self):
+                self.clss = []
+
+            def generic_visit(self, node):
+                for child in ast.iter_child_nodes(node):
+                    yield from self.visit(child)
+
+            def visit_ClassDef(self, node):
+                self.clss.append(node.name)
+                yield from self.generic_visit(node)
+                self.clss.pop()
+
+            def visit_FunctionDef(self, node):
+                # Only allow non nested function definitions.
+                name = '.'.join(itertools.chain(self.clss, [node.name]))
+                yield name, node.lineno
+
         if self.functions_firstlno is None:
             self.functions_firstlno = {}
-            self.parse(reiterate(tokenize.generate_tokens(
-                                    iter(self.source_lines).__next__)))
+            for name, lineno in FuncLineno().visit(self.node):
+                if (name not in self.functions_firstlno or
+                        self.functions_firstlno[name] < lineno):
+                    self.functions_firstlno[name] = lineno
         try:
             return self.functions_firstlno[funcname]
         except KeyError:
@@ -312,41 +322,6 @@ class BdbModule:
             raise BdbSourceError('{}: line {} is after the last '
                 'valid statement.'.format(self.filename, lineno))
         return code_dist[1]
-
-    def parse(self, tok_generator, cindent=0, clss=None):
-        func_lno = 0
-        indent = 0
-        try:
-            for tokentype, tok, srowcol, _end, _line in tok_generator:
-                if tokentype == token.DEDENT:
-                    # End of function definition.
-                    if func_lno and srowcol[1] <= indent:
-                        func_lno = 0
-                    # End of class definition.
-                    if clss and srowcol[1] <= cindent:
-                        return
-                elif tok == 'def' or tok == 'class':
-                    if func_lno and srowcol[1] <= indent:
-                        func_lno = 0
-                    if clss and srowcol[1] <= cindent:
-                        tok_generator.send(1)
-                        return
-                    tokentype, name = next(tok_generator)[0:2]
-                    if tokentype != token.NAME:
-                        continue  # syntax error
-                    # Nested def or class in a function.
-                    if func_lno:
-                            continue
-                    if clss:
-                        name = '{}.{}'.format(clss, name)
-                    if tok == 'def':
-                        lineno, indent = srowcol
-                        func_lno = lineno
-                        self.functions_firstlno[name] = lineno
-                    else:
-                        self.parse(tok_generator, srowcol[1], name)
-        except StopIteration:
-            pass
 
 class ModuleBreakpoints(dict):
     """The breakpoints of a module.
