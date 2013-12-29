@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+'A clone of pdb, the standard library python debugger.'
 
 import sys
 import os
@@ -13,9 +14,6 @@ from distutils.command.build_scripts import build_scripts as _build_scripts
 from unittest import defaultTestLoader
 
 from pdb_clone import __version__
-
-DESCRIPTION = 'A clone of pdb, the standard library python debugger.'
-SCRIPTS = ['pdb-clone']
 
 # Installation path of pdb-clone lib.
 pythonpath = None
@@ -117,28 +115,37 @@ _bdb = distutils.core.Extension('_bdb',
                 sources=['pdb_clone/_bdbmodule.c'],
                 optional=True)
 
+with open('README.rst') as f:
+    long_description = f.read()
+
 distutils.core.setup(
-    cmdclass={'sdist': sdist,
+    cmdclass = {'sdist': sdist,
               'build_scripts': build_scripts,
               'install': install,
               'test': Test},
-    scripts=SCRIPTS,
-    ext_modules = [_bdb],
-    packages=['pdb_clone'],
+    scripts = ['pdb-clone'],
+    ext_modules  =  [_bdb],
+    packages = ['pdb_clone'],
 
     # meta-data
-    name='pdb-clone',
-    version=__version__,
-    description=DESCRIPTION,
-    long_description=DESCRIPTION,
-    platforms='all',
-    license='GNU GENERAL PUBLIC LICENSE Version 2',
-    author='Xavier de Gaye',
-    author_email='xdegaye at users dot sourceforge dot net',
-    url='http://code.google.com/p/pdb-clone/',
-    classifiers=[
-        'Programming Language :: Python',
-        'Programming Language :: Python :: 3'
+    name = 'pdb-clone',
+    version = __version__,
+    description = __doc__,
+    long_description = long_description,
+    platforms = 'all',
+    license = 'GNU GENERAL PUBLIC LICENSE Version 2',
+    author = 'Xavier de Gaye',
+    author_email = 'xdegaye at users dot sourceforge dot net',
+    url = 'http://code.google.com/p/pdb-clone/',
+    classifiers = [
+        'Development Status :: 5 - Production/Stable',
+        'Environment :: Console',
+        'Intended Audience :: Developers',
+        'License :: OSI Approved :: GNU General Public License v2 (GPLv2)',
+        'Operating System :: Unix',
+        'Programming Language :: Python :: 2',
+        'Programming Language :: Python :: 3',
+        'Topic :: Software Development :: Debuggers',
     ],
 )
 
