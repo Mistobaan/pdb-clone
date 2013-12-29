@@ -18,6 +18,12 @@ The pdb command line interface remains unchanged. All the versions of pdb-clone 
 
 See also the `README <http://code.google.com/p/pdb-clone/wiki/ReadMe>`_.
 
+**Install**
+
+For example, install the Python 3 version with pip::
+
+    sudo pip install pdb-clone==1.5.py3 --egg
+
 **Usage**
 
 Invoke pdb-clone as a script to debug other scripts. For example::
