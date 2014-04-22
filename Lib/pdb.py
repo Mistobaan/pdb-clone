@@ -76,11 +76,17 @@ import code
 import glob
 import pprint
 import signal
+import errno
 import inspect
 import importlib
-import imp
+if not hasattr(importlib, 'find_loader'):
+    import imp
 import traceback
 import linecache
+import socket
+import readline
+import shlex
+import pydoc
 
 
 class Restart(Exception):
@@ -88,7 +94,148 @@ class Restart(Exception):
     pass
 
 __all__ = ["run", "pm", "Pdb", "runeval", "runctx", "runcall", "set_trace",
-           "post_mortem", "help"]
+           "set_trace_remote", "post_mortem", "help"]
+
+def restart_call(func, *args):
+    while 1:
+        try:
+            return func(*args)
+        except InterruptedError:
+            continue
+
+def user_method(user_event):
+    """Decorator of the Pdb user_* methods that controls the RemoteSocket."""
+    def wrapper(self, *args):
+        stdin = self.stdin
+        is_sock = isinstance(stdin, RemoteSocket)
+        try:
+            try:
+                if is_sock and not stdin.connect():
+                    return
+                return user_event(self, *args)
+            except Exception:
+                self.close()
+                raise
+        finally:
+            if is_sock and stdin.closed():
+                self.do_detach(None)
+    return wrapper
+
+class RemoteSocket:
+    """File like class that wraps the remote debugging socket."""
+
+    ST_INIT, ST_CONNECTED, ST_CLOSED = tuple(range(3))
+
+    def __init__(self, addr):
+        self.addr = addr
+        self.state = self.ST_INIT
+        self.server = None
+        self.socket = None
+        self.madefile = None
+        self._subinterp = None
+
+    def connect(self):
+        if self.state is self.ST_INIT:
+            try:
+                self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.server.setsockopt(
+                                    socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                # The default socket timeout setting may have been changed by
+                # a call to socket.setdefaulttimeout().
+                self.server.setblocking(True)
+                self.server.bind(self.addr)
+                restart_call(self.server.listen, 0)
+                self.socket, _ = restart_call(self.server.accept)
+                self.socket.setblocking(True)
+                self.server.close()
+                self.server = None
+                # Do not use the preferred encoding as - a) both ends of the
+                # socket may not have the same preferred encoding - b) the
+                # debuggee may be playing tricks with the preferred encoding
+                # as in test_universal_newlines_communicate_encodings of
+                # test_subprocess.py.
+                self.madefile = self.socket.makefile('rw', encoding='utf-8')
+            except KeyboardInterrupt:
+                self.close()
+            except IOError as e:
+                self.close()
+                if e.errno == errno.EADDRINUSE:
+                    print('pdb.RemoteSocket:', str(e), file=sys.stderr)
+                else:
+                    raise
+            else:
+                self.state = self.ST_CONNECTED
+                init = ''
+                if hasattr(os, 'getpid'):
+                    init += 'PROCESS_PID:%s\n' % os.getpid()
+                try:
+                    procname = sys.argv[0]
+                except AttributeError:
+                    # sys.argv is not defined in a sub-interpreter.
+                    procname = '<unknown>'
+                init += 'PROCESS_NAME:%s\n' % procname
+                self.write(init)
+        return self.state is self.ST_CONNECTED
+
+    def readline(self):
+        if self.madefile:
+            try:
+                line = restart_call(self.madefile.readline)
+                if not line:
+                    self.close()
+                else:
+                    return line
+            except IOError:
+                self.close()
+                raise
+        return ''
+
+    def write(self, data):
+        if self.madefile:
+            try:
+                return restart_call(self.madefile.write, data)
+            except IOError:
+                self.close()
+                raise
+        return 0
+
+    def flush(self):
+        if self.madefile:
+            try:
+                self.madefile.flush()
+            except IOError:
+                self.close()
+                raise
+
+    def closed(self):
+        return self.state is not self.ST_CONNECTED
+
+    def close(self):
+        if self.state is self.ST_CONNECTED:
+            try:
+                self.write('%s socket closed by pdb.\n' % str(self.addr))
+            except IOError:
+                pass
+        self.state = self.ST_CLOSED
+        if self.madefile:
+            self.madefile.close()
+            self.madefile = None
+        if self.socket:
+            self.socket.close()
+            self.socket = None
+        if self.server:
+            self.server.close()
+            self.server = None
+
+    # After this method returns, most objects, including builtins, cannot be
+    # referenced anymore by the Pdb or RemoteSocket methods.
+    def terminate(self):
+        if self.state is self.ST_CONNECTED:
+            self.close()
+
+        # Delete the pdb tracer context.
+        if self._subinterp:
+            self._subinterp = None
 
 def find_function(funcname, filename):
     cre = re.compile(r'def\s+%s\s*[(]' % re.escape(funcname))
@@ -231,12 +378,13 @@ line_prefix = '\n-> '   # Probably a better default
 class Pdb(bdb.Bdb, cmd.Cmd):
 
     def __init__(self, completekey='tab', stdin=None, stdout=None, skip=None,
-                 nosigint=False):
+                 nosigint=False, debug=False):
         bdb.Bdb.__init__(self, skip=skip)
         cmd.Cmd.__init__(self, completekey, stdin, stdout)
         if stdout:
             self.use_rawinput = 0
         self.prompt = '(Pdb) '
+        self.is_debug_instance = debug
         self.aliases = {}
         self.displaying = {}
         self.mainpyfile = ''
@@ -244,13 +392,13 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         self.forget()
         # Try to load readline if it exists
         try:
-            import readline
             # remove some common file name delimiters
             readline.set_completer_delims(' \t\n`@#$%^&*()=+[{]}\\|;:\'",<>?')
         except ImportError:
             pass
         self.allow_kbdint = False
         self.nosigint = nosigint
+        self._previous_sigint_handler = None
 
         # Read $HOME/.pdbrc and ./.pdbrc
         self.rcLines = []
@@ -277,13 +425,23 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         self.commands_bnum = None # The breakpoint number for which we are
                                   # defining a list
 
+    def __del__(self):
+        if isinstance(self.stdin, RemoteSocket) and not self.is_debug_instance:
+            self.stdin.terminate()
+
+    def close(self):
+        if isinstance(self.stdin, RemoteSocket) and not self.is_debug_instance:
+            self.stdin.close()
+        if self._previous_sigint_handler:
+            signal.signal(signal.SIGINT, self._previous_sigint_handler)
+
     def sigint_handler(self, signum, frame):
         if self.allow_kbdint:
             raise KeyboardInterrupt
         self.message("\nProgram interrupted. (Use 'cont' to resume).")
-        self.set_trace(frame)
         # restore previous signal handler
         signal.signal(signal.SIGINT, self._previous_sigint_handler)
+        self.set_trace(frame)
 
     def forget(self):
         self.lineno = None
@@ -326,12 +484,14 @@ class Pdb(bdb.Bdb, cmd.Cmd):
 
     # Override Bdb methods
 
+    @user_method
     def user_call(self, frame, argument_list):
         """This method is called when there is the remote possibility
         that we ever need to stop in this function."""
         self.message('--Call--')
         self.interaction(frame, None)
 
+    @user_method
     def user_line(self, frame, breakpoint_hits=None):
         """This function is called when we stop or break at this line."""
         if not breakpoint_hits:
@@ -380,12 +540,14 @@ class Pdb(bdb.Bdb, cmd.Cmd):
             return doprompt, silent
         return None
 
+    @user_method
     def user_return(self, frame, return_value):
         """This function is called when a return trap is set here."""
         frame.f_locals['__return__'] = return_value
         self.message('--Return--')
         self.interaction(frame, None)
 
+    @user_method
     def user_exception(self, frame, exc_info):
         """This function is called if an exception occurs,
         but only if we are to stop at or just below this level."""
@@ -448,24 +610,49 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         if obj is not None:
             self.message(repr(obj))
 
+    def redirect(self, func, *args, **kwds):
+        import sys as _sys
+        do_delsys = False
+        if sys is not _sys:
+            # When Pdb has been instantiated in a subinterpreter, the
+            # redirection must be done in the main interpreter, not in the
+            # subinterpreter.
+            globals = self.curframe.f_globals
+            frame_sys = globals.get('sys')
+            if not frame_sys:
+                globals['sys'] = _sys
+                do_delsys = True
+            else:
+                _sys = frame_sys
+            # The 'code' module is used by the 'interact' command and imported
+            # in the subinterpreter. Redirect the 'code' standard streams to
+            # those of the main interpreter.
+            code.sys = _sys
+
+        save_stdout = _sys.stdout
+        save_stdin = _sys.stdin
+        save_displayhook = _sys.displayhook
+        _sys.stdin = self.stdin
+        _sys.stdout = self.stdout
+        _sys.stderr = self.stdout
+        _sys.displayhook = self.displayhook
+        try:
+            func(*args, **kwds)
+        finally:
+            _sys.stdout = save_stdout
+            _sys.stderr = save_stdout
+            _sys.stdin = save_stdin
+            _sys.displayhook = save_displayhook
+            if do_delsys:
+                del globals['sys']
+
     def default(self, line):
         if line[:1] == '!': line = line[1:]
         locals = self.get_locals(self.curframe)
         globals = self.curframe.f_globals
         try:
             code = compile(line + '\n', '<stdin>', 'single')
-            save_stdout = sys.stdout
-            save_stdin = sys.stdin
-            save_displayhook = sys.displayhook
-            try:
-                sys.stdin = self.stdin
-                sys.stdout = self.stdout
-                sys.displayhook = self.displayhook
-                exec(code, globals, locals)
-            finally:
-                sys.stdout = save_stdout
-                sys.stdin = save_stdin
-                sys.displayhook = save_displayhook
+            self.redirect(exec, code, globals, locals)
         except SystemExit:
             raise
         except:
@@ -1048,7 +1235,6 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         are preserved.  "restart" is an alias for "run".
         """
         if arg:
-            import shlex
             argv0 = sys.argv[0:1]
             sys.argv = shlex.split(arg)
             sys.argv[:0] = argv0
@@ -1069,6 +1255,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         """c(ont(inue))
         Continue execution, only stop when a breakpoint is encountered.
         """
+        self.set_continue()
         if not self.nosigint:
             try:
                 self._previous_sigint_handler = \
@@ -1078,8 +1265,10 @@ class Pdb(bdb.Bdb, cmd.Cmd):
                 # a non-main thread in which case we just continue without
                 # SIGINT set. Would printing a message here (once) make
                 # sense?
-                pass
-        self.set_continue()
+                if not sys.gettrace():
+                    self.message('The trace function has been removed and'
+                            ' this non-main thread cannot be interrupted.')
+                    self.close()
         return 1
     do_c = do_cont = do_continue
 
@@ -1121,7 +1310,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         self.settrace(False)
         globals = self.curframe.f_globals
         locals = self.get_locals(self.curframe)
-        p = Pdb(self.completekey, self.stdin, self.stdout)
+        p = Pdb(self.completekey, self.stdin, self.stdout, debug=True)
         p.prompt = "(%s) " % self.prompt.strip()
         self.message("ENTERING RECURSIVE DEBUGGER")
         sys.call_tracing(p.run, (arg, globals, locals))
@@ -1131,10 +1320,22 @@ class Pdb(bdb.Bdb, cmd.Cmd):
 
     complete_debug = _complete_expression
 
+    def do_detach(self, arg):
+        """detach
+        Release the process from pdb control. Detaching the process continues
+        its execution.
+        """
+        self.clear_all_breaks()
+        self.set_continue()
+        self.close()
+        return 1
+
     def do_quit(self, arg):
         """q(uit)\nexit
         Quit from the debugger. The program being executed is aborted.
         """
+        if isinstance(self.stdin, RemoteSocket) and not self.is_debug_instance:
+            return self.do_detach(arg)
         self._user_requested_quit = True
         self.set_quit()
         return 1
@@ -1147,9 +1348,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         Handles the receipt of EOF as a command.
         """
         self.message('')
-        self._user_requested_quit = True
-        self.set_quit()
-        return 1
+        return self.do_quit(arg)
 
     def do_args(self, arg):
         """a(rgs)
@@ -1405,9 +1604,21 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         Start an interative interpreter whose global namespace
         contains all the (global and local) names found in the current scope.
         """
+        def readfunc(prompt):
+            self.stdout.write(prompt)
+            self.stdout.flush()
+            line = self.stdin.readline()
+            line = line.rstrip('\r\n')
+            if line == 'EOF':
+                raise EOFError
+            return line
+
         ns = self.curframe.f_globals.copy()
         ns.update(self.get_locals(self.curframe))
-        code.interact("*interactive*", local=ns)
+        if isinstance(self.stdin, RemoteSocket):
+            self.redirect(code.interact, local=ns, readfunc=readfunc)
+        else:
+            code.interact("*interactive*", local=ns)
 
     def do_alias(self, arg):
         """alias [name [command [parameter parameter ...] ]]
@@ -1525,7 +1736,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         self.message((self.help_exec.__doc__ or '').strip())
 
     def help_pdb(self):
-        help()
+        help(self.stdout)
 
     # other helper functions
 
@@ -1558,7 +1769,7 @@ if __doc__ is not None:
         'enable', 'ignore', 'condition', 'commands', 'step', 'next', 'until',
         'jump', 'return', 'retval', 'run', 'continue', 'list', 'longlist',
         'args', 'p', 'pp', 'whatis', 'source', 'display', 'undisplay',
-        'interact', 'alias', 'unalias', 'debug', 'quit',
+        'interact', 'alias', 'unalias', 'debug', 'detach', 'quit',
     ]
 
     for _command in _help_order:
@@ -1585,6 +1796,21 @@ def runcall(*args, **kwds):
 
 def set_trace():
     Pdb().set_trace(sys._getframe().f_back)
+
+def set_trace_remote(frame=None, host=b'127.0.0.1', port=7935):
+    # When the set_trace_remote() hard-coded breakpoint is set in a loop
+    # iterating over sys.modules, allowing 'host' to be an str instance could
+    # possibly raise a RuntimeError (dictionary changed size) after the bind()
+    # call on the socket causes the import of 'encodings.idna'.
+    if not isinstance(host, bytes):
+        raise ValueError("'host' must be a bytes object.")
+
+    rsock = RemoteSocket((host, port))
+    pdb = Pdb(stdin=rsock, stdout=rsock)
+    if not frame:
+        frame = sys._getframe().f_back
+    pdb.set_trace(frame)
+    return rsock
 
 # Post-Mortem interface
 
@@ -1613,12 +1839,20 @@ def test():
     run(TESTCMD)
 
 # print help
-def help():
-    import pydoc
-    pydoc.pager(__doc__)
+def help(stdout=sys.stdout):
+    save_stdout = sys.stdout
+    try:
+        sys.stdout = stdout
+        pydoc.pager(__doc__)
+        # Ends the pager output on a newline to enable prompt detection when
+        # doing remote debugging.
+        if save_stdout != stdout:
+            print(file=stdout)
+    finally:
+        sys.stdout = save_stdout
 
 _usage = """\
-usage: pdb.py [-c command] ... pyfile [arg] ...
+usage: pdb-clone [-c command] ... pyfile [arg] ...
 
 Debug the Python program given by pyfile.
 

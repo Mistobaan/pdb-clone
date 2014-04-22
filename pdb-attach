@@ -1,0 +1,4 @@
+#!/usr/bin/env python3
+
+from pdb_clone import attach
+attach.main(pdbclone_path)

@@ -1,13 +1,21 @@
 # A test suite for pdb; not very comprehensive at the moment.
 
-import imp
-from pdb_clone import pdb
 import sys
 import os
+import io
+import time
+import imp
 import unittest
 import subprocess
 import textwrap
 import importlib
+from pdb_clone import pdb
+from pdb_clone import attach as pdb_attach
+from test.script_helper import assert_python_ok
+try:
+    import threading
+except ImportError:
+    threading = None
 
 from test import support
 # This little helper class is essential for testing pdb under doctest.
@@ -1291,11 +1299,106 @@ class PdbTestCase(unittest.TestCase):
     def tearDown(self):
         support.unlink(support.TESTFN)
 
+@unittest.skipIf(threading is None, 'threading module is required')
+class RemoteDebuggingTestCase(unittest.TestCase):
+    """Remote debugging test cases."""
+
+    def run_pdb_remotely(self, source, commands):
+        """Run 'commands' in a spawned process."""
+
+        class Process(threading.Thread):
+            def run(self):
+                rc, self.stdout, self.stderr = assert_python_ok("-c", source,
+                                                            __isolated=False)
+
+        stdin = io.StringIO('\n'.join(commands))
+        proc = Process()
+        proc.start()
+        count = 0
+        while True:
+            try:
+                stdout = io.StringIO()
+                pdb_attach.attach(stdin=stdin, stdout=stdout)
+                break
+            except (ConnectionRefusedError, SystemExit):
+                count += 1
+                if count >= 40:
+                    raise
+                time.sleep(0.200)
+        proc.join()
+        self.assertFalse(proc.stdout)
+        self.assertFalse(proc.stderr)
+        return stdout.getvalue()
+
+    def test_command_redirection(self):
+        # Check the redirection of pdb commands.
+        stdout = self.run_pdb_remotely("""if 1:
+            from pdb_clone import pdb
+            pdb.set_trace_remote()
+            """,
+            [
+                'help detach',
+                'detach',
+             ]
+        )
+        self.assertIn('Release the process from pdb control.', stdout)
+
+    def test_statement_output_redirection(self):
+        # Check the redirection of python statements at the pdb prompt.
+        stdout = self.run_pdb_remotely("""if 1:
+            from pdb_clone import pdb
+            a = 1
+            pdb.set_trace_remote()
+            """,
+            [
+                'print("a + 2 = %d" % (a + 2))',
+                'detach',
+             ]
+        )
+        self.assertIn('a + 2 = 3', stdout)
+
+    def test_debug_command(self):
+        stdout = self.run_pdb_remotely("""if 1:
+            from pdb_clone import pdb
+            def foo():
+                a = 'in foo'
+            pdb.set_trace_remote()
+            fin = 'fin'
+            """,
+            [
+                'debug foo()',
+                'step',
+                'step',
+                'step',
+                'print(a)',
+                'quit',
+                'step',
+                'print(fin)',
+                'detach',
+             ]
+        )
+        self.assertIn('in foo', stdout)
+        self.assertIn('fin', stdout)
+
+    def test_interact_command(self):
+        some_text = 'testing the interact command'
+        stdout = self.run_pdb_remotely("""if 1:
+            from pdb_clone import pdb
+            text = '%s'
+            pdb.set_trace_remote()
+            """ % some_text,
+            [
+                'interact',
+                'text',
+                'quit()',
+             ]
+        )
+        self.assertIn(some_text, stdout)
 
 def test_main():
     from test import test_pdb
     support.run_doctest(test_pdb, verbosity=True)
-    support.run_unittest(PdbTestCase)
+    support.run_unittest(PdbTestCase, RemoteDebuggingTestCase)
 
 
 if __name__ == '__main__':

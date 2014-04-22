@@ -47,9 +47,11 @@ typedef struct {
     PyCodeObject *f_code;       /* The current f_code object. */
 } BdbTracer;
 
+/* Forward declarations. */
 static int tracer(PyObject *, PyFrameObject *, int, PyObject *);
 static PyObject * trace_call(BdbTracer *, PyFrameObject *, PyObject *);
 static PyObject * trace_return(BdbTracer *, PyFrameObject *, PyObject *);
+static PyObject * BdbTracer_gettrace(BdbTracer *);
 #ifdef TRACE_AND_PROFILE
 static int profiler(PyObject *, PyFrameObject *, int, PyObject *);
 #endif
@@ -353,6 +355,19 @@ user_method(BdbTracer *self, PyFrameObject *frame, char *name, PyObject *arg)
     return PyObject_CallMethod((PyObject *)self, "get_traceobj", NULL);
 }
 
+#ifdef TRACE_AND_PROFILE
+static void
+swap_tracer_profiler(BdbTracer *self)
+{
+    PyObject *trace_obj = BdbTracer_gettrace(self);
+    if (trace_obj != Py_None) {
+        PyEval_SetProfile(profiler, (PyObject *)self);
+        PyEval_SetTrace(NULL, NULL);
+    }
+    Py_DECREF(trace_obj);
+}
+#endif
+
 static int
 tracer(PyObject *traceobj, PyFrameObject *frame, int what, PyObject *arg)
 {
@@ -466,10 +481,8 @@ fin:
          * until, return} command had been previously issued. */
         if (what == PyTrace_CALL &&
                 ! (frame->f_code->co_flags & CO_GENERATOR
-                        && (PyObject *)frame == self->stopframe)) {
-            PyEval_SetProfile(profiler, (PyObject *)self);
-            PyEval_SetTrace(NULL, NULL);
-        }
+                        && (PyObject *)frame == self->stopframe))
+            swap_tracer_profiler(self);
 #endif
     }
 
@@ -477,10 +490,8 @@ exit:
 #ifdef TRACE_AND_PROFILE
     /* Returning to the calling frame where lines are not traced. */
     if (what == PyTrace_RETURN && (PyObject *)frame != self->botframe) {
-        if (frame->f_back != NULL && frame->f_back->f_trace == NULL) {
-            PyEval_SetProfile(profiler, (PyObject *)self);
-            PyEval_SetTrace(NULL, NULL);
-        }
+        if (frame->f_back != NULL && frame->f_back->f_trace == NULL)
+            swap_tracer_profiler(self);
     }
 #endif
     Py_DECREF(self);
@@ -537,7 +548,7 @@ profiler(PyObject *traceobj, PyFrameObject *frame, int what, PyObject *arg)
         case PyTrace_RETURN:
             if ((PyObject *)frame == self->botframe)
                 PyEval_SetProfile(NULL, NULL);
-            else if (frame->f_back != NULL && frame->f_back->f_trace != NULL) {
+            else if (frame->f_back == NULL || frame->f_back->f_trace != NULL) {
                 PyEval_SetTrace(tracer, (PyObject *)self);
                 PyEval_SetProfile(NULL, NULL);
             }
