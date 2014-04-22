@@ -2,6 +2,8 @@
 
   * Improve significantly pdb performance. With breakpoints, pdb-clone runs just above the speed of the interpreter while pdb runs at 10 to 100 times the speed of the interpreter, see `Performances <http://code.google.com/p/pdb-clone/wiki/Performances>`_.
 
+  * Instrument your code with a *set_trace_remote()* hard-coded breakpoint and run the *pdb-attach* script from another terminal to start the remote debugging session. Or, when your code has not been instrumented, run *pdb-attach* with the *--pid* option to start the remote debugging session at any time and attach to the process main thread. This is only implemented in the py3 and py2.7 versions of pdb-clone, see `RemoteDebugging <http://code.google.com/p/pdb-clone/wiki/RemoteDebugging>`_.
+
   * Fix pdb long standing bugs entered in the python issue tracker, see the `News <http://code.google.com/p/pdb-clone/wiki/News>`_.
 
   * Add a bdb comprehensive test suite (more than 70 tests) and run both pdb and bdb test suites.
@@ -14,7 +16,7 @@
 
     * The *py2.4* version runs on all python versions from 2.4 to 2.7 included. In this version, the *restart* command only handles source code changes made to the main module.
 
-The pdb command line interface remains unchanged. All the versions of pdb-clone implement the most recent python3 features of pdb, as defined in the python3 `pdb documentation`_.
+The pdb command line interface remains unchanged except for the new `detach` pdb command. All the versions of pdb-clone implement the most recent python3 features of pdb, as defined in the python3 `pdb documentation`_.
 
 See also the `README <http://code.google.com/p/pdb-clone/wiki/ReadMe>`_.
 

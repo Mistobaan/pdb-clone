@@ -4,6 +4,7 @@ import fnmatch
 import sys
 import os
 import linecache
+import reprlib
 import ast
 import itertools
 import types
@@ -13,7 +14,7 @@ from bisect import bisect
 from operator import attrgetter
 from inspect import CO_GENERATOR
 try:
-    import _bdb
+    from pdb_clone import _bdb
 except ImportError:
     _bdb = None
 
@@ -665,6 +666,9 @@ class Bdb(BdbTracer):
 
         # See PyFrame_GetLineNumber() in Objects/frameobject.c for why the
         # local trace functions must be deleted.
+        # This is also required by bootstrappdb: to terminate the
+        # subinterpreter where lives the pdb instance, there must be no
+        # references to the pdb instance.
         if not frame:
             frame = self.topframe
         while frame:
@@ -896,7 +900,6 @@ class Bdb(BdbTracer):
         return stack, i
 
     def format_stack_entry(self, frame_lineno, lprefix=': '):
-        import reprlib
         frame, lineno = frame_lineno
         filename = canonic(frame.f_code.co_filename)
         s = '%s(%r)' % (filename, lineno)
