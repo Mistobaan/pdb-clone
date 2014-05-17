@@ -4,6 +4,7 @@ import fnmatch
 import sys
 import os
 import linecache
+import repr
 import ast
 import itertools
 import types
@@ -12,7 +13,7 @@ import shutil
 from bisect import bisect
 from operator import attrgetter
 try:
-    import _bdb
+    from pdb_clone import _bdb
 except ImportError:
     _bdb = None
 
@@ -632,6 +633,9 @@ class Bdb(BdbTracer):
 
         # See PyFrame_GetLineNumber() in Objects/frameobject.c for why the
         # local trace functions must be deleted.
+        # This is also required by bootstrappdb: to terminate the
+        # subinterpreter where lives the pdb instance, there must be no
+        # references to the pdb instance.
         if not frame:
             frame = self.topframe
         while frame:
@@ -863,7 +867,6 @@ class Bdb(BdbTracer):
         return stack, i
 
     def format_stack_entry(self, frame_lineno, lprefix=': '):
-        import repr
         frame, lineno = frame_lineno
         filename = canonic(frame.f_code.co_filename)
         s = '%s(%r)' % (filename, lineno)
@@ -882,8 +885,15 @@ class Bdb(BdbTracer):
             s += '()'
         if '__return__' in locals:
             rv = locals['__return__']
-            s += '->'
-            s += repr.repr(rv)
+            try:
+                rv_repr = repr.repr(rv)
+            except AttributeError:
+                # Handling the case where 'rv' is not fully defined. For
+                # example when we are stopped in its __new__() method.
+                pass
+            else:
+                s += '->'
+                s += rv_repr
         line = linecache.getline(filename, lineno, frame.f_globals)
         if line:
             s += lprefix + line.strip()
