@@ -2,7 +2,7 @@
 
   * Improve significantly pdb performance. With breakpoints, pdb-clone runs just above the speed of the interpreter while pdb runs at 10 to 100 times the speed of the interpreter, see `Performances <http://code.google.com/p/pdb-clone/wiki/Performances>`_.
 
-  * Instrument your code with a *set_trace_remote()* hard-coded breakpoint and run the *pdb-attach* script from another terminal to start the remote debugging session. Or, when your code has not been instrumented, run *pdb-attach* with the *--pid* option to start the remote debugging session at any time and attach to the process main thread. This is only implemented in the py3 and py2.7 versions of pdb-clone, see `RemoteDebugging <http://code.google.com/p/pdb-clone/wiki/RemoteDebugging>`_.
+  * Instrument the code with a ``set_trace_remote()`` hard-coded breakpoint and run the ``pdb-attach`` script from another terminal to start a remote debugging session. Or, when the code has not been instrumented, run ``pdb-attach`` with the ``--pid`` option to start the remote debugging session at any time and attach to the process main thread. This feature is implemented in the py3 and py2.7 versions of pdb-clone, see `RemoteDebugging <http://code.google.com/p/pdb-clone/wiki/RemoteDebugging>`_.
 
   * Fix pdb long standing bugs entered in the python issue tracker, see the `News <http://code.google.com/p/pdb-clone/wiki/News>`_.
 
@@ -14,19 +14,19 @@
 
     * The *py2.7* vesion runs on python 2.7.
 
-    * The *py2.4* version runs on all python versions from 2.4 to 2.7 included. In this version, the *restart* command only handles source code changes made to the main module.
+    * The *py2.4* version runs on all python versions from 2.4 to 2.7 included. In this version, the ``restart`` command only handles source code changes made to the main module.
 
-The pdb command line interface remains unchanged except for the new `detach` pdb command. All the versions of pdb-clone implement the most recent python3 features of pdb, as defined in the python3 `pdb documentation`_.
+The pdb command line interface remains unchanged except for the new ``detach`` pdb command. All the versions of pdb-clone implement the most recent python3 features of pdb, as defined in the python3 `pdb documentation`_.
 
 See also the `README <http://code.google.com/p/pdb-clone/wiki/ReadMe>`_.
 
 **Install**
 
-For example, to install the Python 3 version of pdb-clone version 1.5 with pip::
+For example, to install the Python 3 version of pdb-clone version 1.6 with pip::
 
-    sudo pip install pdb-clone==1.5.py3 --egg
+    sudo pip install pdb-clone==1.6.py3 --egg
 
-This requires *pip 1.2* or above. *pip 1.2* fixes `pip issue 3 <https://github.com/pypa/pip/issues/3>`_ by adding the *--egg* option so as not to use *single-version-externally-managed*. Unfortunately *single-version-externally-managed* seems to break all the Python packages based on the standard library *distutils*.
+This requires *pip 1.2* or above. *pip 1.2* fixes `pip issue 3 <https://github.com/pypa/pip/issues/3>`_ by adding the ``--egg`` option so as not to use ``single-version-externally-managed``. Unfortunately ``single-version-externally-managed`` seems to break all the Python packages based on the standard library ``distutils``.
 
 
 **Usage**

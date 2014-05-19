@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"A clone of pdb, fast and with the *remote debugging* and *attach* features."
+"A clone of pdb, fast and with the remote debugging and attach features."
 
 import sys
 import os
