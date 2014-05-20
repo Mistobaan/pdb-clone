@@ -1012,12 +1012,11 @@ class PdbTestCase(unittest.TestCase):
     def tearDown(self):
         support.unlink(support.TESTFN)
 
-@unittest.skipIf(threading is None, 'threading module is required')
-class RemoteDebuggingTestCase(unittest.TestCase):
-    """Remote debugging test cases."""
+class RemoteDebugging(unittest.TestCase):
+    """Remote debugging support."""
 
     def run_pdb_remotely(self, source, commands):
-        """Run 'commands' in a spawned process."""
+        """Run 'source' in a spawned process."""
 
         class Process(threading.Thread):
             # Use FAKE_ENV_VARIABLE to prevent assert_python_ok() to run
@@ -1047,6 +1046,10 @@ class RemoteDebuggingTestCase(unittest.TestCase):
         self.assertFalse(proc.stdout)
         self.assertFalse(proc.stderr)
         return stdout.getvalue()
+
+@unittest.skipIf(threading is None, 'threading module is required')
+class RemoteDebuggingTestCase(RemoteDebugging):
+    """Remote debugging test cases."""
 
     def test_command_redirection(self):
         # Check the redirection of pdb commands.
@@ -1113,10 +1116,34 @@ class RemoteDebuggingTestCase(unittest.TestCase):
         )
         self.assertIn(some_text, stdout)
 
+@unittest.skipIf(threading is None, 'threading module is required')
+class PdbTestCaseUsingRemoteDebugging(RemoteDebugging):
+    """Test cases using remote debugging."""
+
+    def test_issue_21161(self):
+        # List comprehensions don't see local variables.
+        stdout = self.run_pdb_remotely("""if 1:
+            from pdb_clone import pdb
+
+            def foo():
+              items = [1, 2, 3]
+              limit = 5
+              pdb.set_trace_remote()
+
+            foo()
+            """,
+            [
+                "!print 'The result is', all(x < limit for x in items)",
+                'detach',
+             ]
+        )
+        self.assertIn('The result is True\n', stdout)
+
 def test_main():
     from test import test_pdb
     support.run_doctest(test_pdb, verbosity=True)
-    support.run_unittest(PdbTestCase, RemoteDebuggingTestCase)
+    support.run_unittest(PdbTestCase, RemoteDebuggingTestCase,
+                         PdbTestCaseUsingRemoteDebugging)
 
 
 if __name__ == '__main__':
