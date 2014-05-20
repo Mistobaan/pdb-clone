@@ -649,10 +649,11 @@ class Pdb(bdb.Bdb, cmd.Cmd):
     def default(self, line):
         if line[:1] == '!': line = line[1:]
         locals = self.get_locals(self.curframe)
-        globals = self.curframe.f_globals
+        ns = self.curframe.f_globals.copy()
+        ns.update(locals)
         try:
             code = compile(line + '\n', '<stdin>', 'single')
-            self.redirect(exec, code, globals, locals)
+            self.redirect(exec, code, ns, locals)
         except SystemExit:
             raise
         except:
