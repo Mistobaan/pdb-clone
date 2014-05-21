@@ -1,11 +1,12 @@
 #!/usr/bin/env python
+"A clone of pdb, the standard library python debugger."
 
 import sys
 import os
 import doctest
 import shutil
 import test.test_support as support
-import distutils.core
+from distutils.core import Command, Extension, setup
 from distutils.errors import *
 from distutils.command.install import install as _install
 from distutils.command.sdist import sdist as _sdist
@@ -15,31 +16,30 @@ from unittest import defaultTestLoader
 
 from pdb_clone import __version__
 
-DESCRIPTION = 'A clone of pdb, the standard library python debugger.'
-SCRIPTS = ['pdb-clone']
-
-# Installation path of pdb-clone lib.
-pythonpath = None
+# Installation path of pdb-clone.
+pdbclone_path = None
 
 class install(_install):
     def run(self):
-        global pythonpath
-        pythonpath = self.install_purelib
+        global pdbclone_path
+        pdbclone_path = self.install_purelib
         _install.run(self)
 
 class build_scripts(_build_scripts):
     def run(self):
-        """Add pythonpath to pdb-clone in a 'home scheme' installation."""
-        if pythonpath is not None and pythonpath not in sys.path:
-            self.executable += '\n\nimport sys\n'
-            self.executable += "sys.path.append('" + pythonpath + "')\n"
+        """Add pdbclone_path to pdb-clone in a 'home scheme' installation."""
+        assert pdbclone_path is not None
+        self.executable += "\n\npdbclone_path = '%s'" % pdbclone_path
+        if pdbclone_path not in sys.path:
+            self.executable += '\nimport sys\n'
+            self.executable += "sys.path.append(pdbclone_path)"
         _build_scripts.run(self)
 
 class sdist(_sdist):
     """Subclass sdist to force copying symlinked files."""
     def copy_file(self, infile, outfile, preserve_mode=1, preserve_times=1,
             link=None, level=1):
-        return distutils.core.Command.copy_file(self, infile, outfile,
+        return Command.copy_file(self, infile, outfile,
                 preserve_mode=preserve_mode, preserve_times=preserve_times,
                 link=None, level=level)
 
@@ -50,7 +50,7 @@ class build_ext(_build_ext):
         except (CCompilerError, DistutilsError, CompileError):
             self.warn('\n\n*** Building the _bdb extension failed. ***')
 
-class Test(distutils.core.Command):
+class Test(Command):
     description = 'run the test suite'
 
     user_options = [
@@ -140,23 +140,22 @@ class Test(distutils.core.Command):
             result = 'failed'
         print '%d test%s %s.' % (cnt, plural, result)
 
-_bdb = distutils.core.Extension('_bdb', sources=['pdb_clone/_bdbmodule.c'])
-
-distutils.core.setup(
+setup(
     cmdclass={'sdist': sdist,
               'build_scripts': build_scripts,
               'install': install,
               'build_ext': build_ext,
               'test': Test},
-    scripts=SCRIPTS,
-    ext_modules = [_bdb],
+    scripts=['pdb-clone'],
+    ext_modules=[Extension('pdb_clone._bdb',
+                    sources=['pdb_clone/_bdbmodule.c'])],
     packages=['pdb_clone'],
 
     # meta-data
     name='pdb-clone',
     version=__version__,
-    description=DESCRIPTION,
-    long_description=DESCRIPTION,
+    description = __doc__,
+    long_description=__doc__,
     platforms='all',
     license='GNU GENERAL PUBLIC LICENSE Version 2',
     author='Xavier de Gaye',

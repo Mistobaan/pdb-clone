@@ -754,6 +754,8 @@ class IssueTestCase(PdbTestCase):
         self._cleanups = []
 
     def tearDown(self):
+        unlink(support.TESTFN)
+
         while self._cleanups:
             function, args, kwargs = self._cleanups.pop(-1)
             try:
@@ -957,7 +959,7 @@ class IssueTestCase(PdbTestCase):
 
     def test_issue_13044(self):
         script = """
-            import pdb
+            from pdb_clone import pdb
 
             pdb.set_trace()
             a = 1
@@ -1005,7 +1007,7 @@ class IssueTestCase(PdbTestCase):
             f = open(support.TESTFN, 'wb')
             f.write(textwrap.dedent("""
                 import threading
-                import pdb
+                from pdb_clone import pdb
 
                 def start_pdb():
                     pdb.Pdb().set_trace()
@@ -1056,9 +1058,31 @@ class IssueTestCase(PdbTestCase):
             'Fail to set a breakpoint by function name after import.' %
             (expected, stdout))
 
+    def test_issue_21161(self):
+        # List comprehensions don't see local variables.
+        script = """
+            def foo():
+              items = [1, 2, 3]
+              limit = 5
 
-    def tearDown(self):
-        unlink(support.TESTFN)
+            foo()
+            """
+        commands = """
+            break foo
+            continue
+            step
+            step
+            !print 'The result is', list(x < limit for x in items)
+            quit
+            """
+        expected = 'The result is [True, True, True]\n'
+        filename = 'main.py'
+        stdout, stderr = self.run_pdb(script, commands, filename)
+        stdout = normalize(stdout, filename)
+        self.assertTrue(expected in stdout,
+            '\n\nExpected:\n%s\nGot:\n%s\n'
+            'Fail to reference free variables in generator expression.'
+             % (expected, stdout))
 
 
 def test_main():
