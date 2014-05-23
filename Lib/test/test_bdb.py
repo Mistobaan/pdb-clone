@@ -465,7 +465,7 @@ class RunCallTestCase(SetMethodTestCase):
             from test_module_2 import foo
             try:
                 foo()
-            except:
+            except Exception:
                 lno = 6
             lno = 7
         """)
