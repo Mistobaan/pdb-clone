@@ -1037,7 +1037,7 @@ class Breakpoint:
             try:
                 if not eval(self.cond, frame.f_globals, frame.f_locals):
                     return False, False
-            except:
+            except Exception:
                 # If the breakpoint condition evaluation fails, the most
                 # conservative thing is to stop on the breakpoint.  Don't
                 # delete temporary, as another hint to the user.

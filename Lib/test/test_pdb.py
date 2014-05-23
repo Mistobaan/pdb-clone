@@ -1295,6 +1295,79 @@ class PdbTestCase(unittest.TestCase):
             'Fail to set a breakpoint by function name after import.'
             .format(expected, stdout))
 
+    def test_issue_20853_1(self):
+        # pdb "args" crashes when an arg is not printable.
+        script = """
+            class foo:
+                def __init__(self):
+                    foo.bar = "hello"
+                def __repr__(self):
+                    return foo.bar
+
+            foo()
+        """
+        commands = """
+            step
+            step
+            step
+            step
+            step
+            step
+            step
+            step
+            args
+            p self
+            pp self
+            display self
+            quit
+        """
+        filename = 'main.py'
+        stdout, stderr = self.run_pdb(script, commands, filename)
+        stdout = normalize(stdout, filename)
+        self.assertTrue(
+            len(list(filter(lambda x: '__main__.foo object' in x,
+                                            stdout.split('\n')))) == 4,
+            '\n\nGot:\n{}\n'
+            'Fail to print a safe representation of self.'
+            .format(stdout))
+
+    def test_issue_20853_2(self):
+        # pdb "retval" crashes when the return value is not printable.
+        script = """
+            class C(object):
+                def __new__(cls, *args, **kwds):
+                    return object.__new__(cls)
+
+                def __init__(self, value):
+                    self.value = value
+
+                def __repr__(self):
+                    return str(self.value)
+
+            C(123)
+        """
+        commands = """
+            step
+            step
+            step
+            step
+            step
+            step
+            step
+            step
+            step
+            step
+            retval
+            quit
+        """
+        expected = '<__main__.C object at'
+        filename = 'main.py'
+        stdout, stderr = self.run_pdb(script, commands, filename)
+        stdout = normalize(stdout, filename)
+        self.assertTrue(expected in stdout,
+            '\n\nExpected:\n{}\nGot:\n{}\n'
+            'Fail to print a safe representation of the return value.'
+            .format(expected, stdout))
 
     def tearDown(self):
         support.unlink(support.TESTFN)
