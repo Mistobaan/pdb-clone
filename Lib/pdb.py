@@ -80,6 +80,9 @@ import inspect
 import imp
 import traceback
 import linecache
+import readline
+import shlex
+import pydoc
 
 
 class Restart(Exception):
@@ -233,7 +236,6 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         self.forget()
         # Try to load readline if it exists
         try:
-            import readline
             # remove some common file name delimiters
             readline.set_completer_delims(' \t\n`@#$%^&*()=+[{]}\\|;:\'",<>?')
         except ImportError:
@@ -1048,7 +1050,6 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         are preserved.  "restart" is an alias for "run".
         """
         if arg:
-            import shlex
             argv0 = sys.argv[0:1]
             sys.argv = shlex.split(arg)
             sys.argv[:0] = argv0
@@ -1627,7 +1628,6 @@ def test():
 
 # print help
 def help():
-    import pydoc
     pydoc.pager(__doc__)
 
 _usage = """\
