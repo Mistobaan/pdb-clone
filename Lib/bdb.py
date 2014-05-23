@@ -84,6 +84,12 @@ def code_line_numbers(code):
             valid_lno = lno
             yield valid_lno
 
+def safe_repr(obj):
+    try:
+        return repr(obj)
+    except Exception:
+        return object.__repr__(obj)
+
 class BdbException(Exception):
     """A bdb exception."""
 
@@ -851,7 +857,6 @@ class Bdb(BdbTracer):
         return stack, i
 
     def format_stack_entry(self, frame_lineno, lprefix=': '):
-        import repr
         frame, lineno = frame_lineno
         filename = canonic(frame.f_code.co_filename)
         s = '%s(%r)' % (filename, lineno)
@@ -865,13 +870,13 @@ class Bdb(BdbTracer):
         else:
             args = None
         if args:
-            s += repr.repr(args)
+            s += safe_repr(args)
         else:
             s += '()'
         if '__return__' in locals:
             rv = locals['__return__']
             s += '->'
-            s += repr.repr(rv)
+            s += safe_repr(rv)
         line = linecache.getline(filename, lineno)
         if line:
             s += lprefix + line.strip()

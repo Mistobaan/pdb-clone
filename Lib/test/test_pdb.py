@@ -1084,6 +1084,78 @@ class IssueTestCase(PdbTestCase):
             'Fail to reference free variables in generator expression.'
              % (expected, stdout))
 
+    def test_issue_20853_1(self):
+        # pdb "args" crashes when an arg is not printable.
+        script = """
+            class foo(object):
+                def __init__(self):
+                    foo.bar = "hello"
+                def __repr__(self):
+                    return foo.bar
+
+            foo()
+        """
+        commands = """
+            step
+            step
+            step
+            step
+            step
+            step
+            step
+            step
+            args
+            p self
+            pp self
+            display self
+            quit
+        """
+        filename = 'main.py'
+        stdout, stderr = self.run_pdb(script, commands, filename)
+        stdout = normalize(stdout, filename)
+        self.assertTrue(
+            len(list(filter(lambda x: '__main__.foo object' in x,
+                                            stdout.split('\n')))) == 4,
+            '\n\nGot:\n%s\n'
+            'Fail to print a safe representation of self.' % stdout)
+
+    def test_issue_20853_2(self):
+        # pdb "retval" crashes when the return value is not printable.
+        script = """
+            class C(object):
+                def __new__(cls, *args, **kwds):
+                    return object.__new__(cls)
+
+                def __init__(self, value):
+                    self.value = value
+
+                def __repr__(self):
+                    return str(self.value)
+
+            C(123)
+        """
+        commands = """
+            step
+            step
+            step
+            step
+            step
+            step
+            step
+            step
+            step
+            step
+            retval
+            quit
+        """
+        expected = '<__main__.C object at'
+        filename = 'main.py'
+        stdout, stderr = self.run_pdb(script, commands, filename)
+        stdout = normalize(stdout, filename)
+        self.assertTrue(expected in stdout,
+            '\n\nExpected:\n%s\nGot:%s{}\n'
+            'Fail to print a safe representation of the return value.' %
+            (expected, stdout))
 
 def test_main():
     from test import test_pdb
