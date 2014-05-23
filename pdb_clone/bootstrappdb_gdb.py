@@ -168,7 +168,7 @@ class PyPdb(gdb.Command):
         except PdbFatalError:
             print('Unable to setup pdb for remote debugging.\n%s'
                                         % sys.exc_info()[1])
-        except:
+        except Exception:
             traceback.print_exc()
             print('Cannot setup pdb for remote debugging.\n%s'
                                         % sys.exc_info()[1])
