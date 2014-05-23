@@ -4,7 +4,6 @@ import fnmatch
 import sys
 import os
 import linecache
-import repr
 import ast
 import itertools
 import types
@@ -127,6 +126,12 @@ def code_line_numbers(code):
         if lno != valid_lno:
             valid_lno = lno
             yield valid_lno
+
+def safe_repr(obj):
+    try:
+        return repr(obj)
+    except Exception:
+        return object.__repr__(obj)
 
 class BdbException(Exception):
     """A bdb exception."""
@@ -880,20 +885,13 @@ class Bdb(BdbTracer):
         else:
             args = None
         if args:
-            s += repr.repr(args)
+            s += safe_repr(args)
         else:
             s += '()'
         if '__return__' in locals:
             rv = locals['__return__']
-            try:
-                rv_repr = repr.repr(rv)
-            except AttributeError:
-                # Handling the case where 'rv' is not fully defined. For
-                # example when we are stopped in its __new__() method.
-                pass
-            else:
-                s += '->'
-                s += rv_repr
+            s += '->'
+            s += safe_repr(rv)
         line = linecache.getline(filename, lineno, frame.f_globals)
         if line:
             s += lprefix + line.strip()
@@ -1011,7 +1009,7 @@ class Breakpoint:
             try:
                 if not eval(self.cond, frame.f_globals, frame.f_locals):
                     return False, False
-            except:
+            except Exception:
                 # If the breakpoint condition evaluation fails, the most
                 # conservative thing is to stop on the breakpoint.  Don't
                 # delete temporary, as another hint to the user.

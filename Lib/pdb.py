@@ -325,7 +325,7 @@ def source_filename(filename):
 def get_fqn_fname(fqn, frame):
     try:
         func = eval(fqn, frame.f_globals)
-    except:
+    except Exception:
         # fqn is defined in a module not yet (fully) imported.
         module = inspect.getmodule(frame)
         candidate_tuples = []
@@ -578,8 +578,9 @@ class Pdb(bdb.Bdb, cmd.Cmd):
                 # fields are changed to be displayed
                 if newvalue is not oldvalue and newvalue != oldvalue:
                     displaying[expr] = newvalue
-                    self.message('display %s: %r  [old: %r]' %
-                                 (expr, newvalue, oldvalue))
+                    self.message('display %s: %s  [old: %s]' %
+                        (expr, bdb.safe_repr(newvalue),
+                                        bdb.safe_repr(oldvalue)))
 
     def interaction(self, frame, traceback):
         if self.setup(frame, traceback):
@@ -649,9 +650,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         try:
             code = compile(line + '\n', '<stdin>', 'single')
             self.redirect('exec', code, ns, locals)
-        except SystemExit:
-            raise
-        except:
+        except Exception:
             exc_info = sys.exc_info()[:2]
             self.error(traceback.format_exception_only(*exc_info)[-1].strip())
 
@@ -829,7 +828,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         else:
             try:
                 bnum = int(arg)
-            except:
+            except Exception:
                 self.error("Usage: commands [bnum]\n        ...\n        end")
                 return
         self.commands_bnum = bnum
@@ -1046,7 +1045,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         args = arg.split(' ', 1)
         try:
             count = int(args[1].strip())
-        except:
+        except Exception:
             count = 0
         try:
             bp = self.get_bpbynumber(args[0].strip())
@@ -1358,7 +1357,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         for i in range(n):
             name = co.co_varnames[i]
             if name in dict:
-                self.message('%s = %r' % (name, dict[name]))
+                self.message('%s = %s' % (name, bdb.safe_repr(dict[name])))
             else:
                 self.message('%s = *** undefined ***' % (name,))
     do_a = do_args
@@ -1369,7 +1368,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         """
         locals = self.get_locals(self.curframe)
         if '__return__' in locals:
-            self.message(repr(locals['__return__']))
+            self.message(bdb.safe_repr(locals['__return__']))
         else:
             self.error('Not yet returned!')
     do_rv = do_retval
@@ -1378,7 +1377,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         try:
             return eval(arg, self.curframe.f_globals,
                             self.get_locals(self.curframe))
-        except:
+        except Exception:
             exc_info = sys.exc_info()[:2]
             self.error(traceback.format_exception_only(*exc_info)[-1].strip())
             raise
@@ -1390,7 +1389,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
                                 self.get_locals(self.curframe))
             else:
                 return eval(arg, frame.f_globals, frame.f_locals)
-        except:
+        except Exception:
             exc_info = sys.exc_info()[:2]
             err = traceback.format_exception_only(*exc_info)[-1].strip()
             return _rstr('** raised %s **' % err)
@@ -1400,8 +1399,8 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         Print the value of the expression.
         """
         try:
-            self.message(repr(self._getval(arg)))
-        except:
+            self.message(bdb.safe_repr(self._getval(arg)))
+        except Exception:
             pass
     # make "print" an alias of "p" since print isn't a Python statement anymore
     do_print = do_p
@@ -1410,10 +1409,13 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         """pp expression
         Pretty-print the value of the expression.
         """
+        obj = self._getval(arg)
         try:
-            self.message(pprint.pformat(self._getval(arg)))
-        except:
-            pass
+            repr(obj)
+        except Exception:
+            self.message(bdb.safe_repr(obj))
+        else:
+            self.message(pprint.pformat(obj))
 
     complete_print = _complete_expression
     complete_p = _complete_expression
@@ -1491,7 +1493,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         """
         try:
             obj = self._getval(arg)
-        except:
+        except Exception:
             return
         try:
             lines, lineno = getsourcelines(obj, self.get_locals(self.curframe))
@@ -1529,7 +1531,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         """
         try:
             value = self._getval(arg)
-        except:
+        except Exception:
             # _getval() already printed the error
             return
         code = None
@@ -1569,11 +1571,11 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         if not arg:
             self.message('Currently displaying:')
             for item in self.displaying.get(self.curframe, {}).items():
-                self.message('%s: %r' % item)
+                self.message('%s: %s' % bdb.safe_repr(item))
         else:
             val = self._getval_except(arg)
             self.displaying.setdefault(self.curframe, {})[arg] = val
-            self.message('display %s: %r' % (arg, val))
+            self.message('display %s: %s' % (arg, bdb.safe_repr(val)))
 
     complete_display = _complete_expression
 
@@ -1905,7 +1907,7 @@ def main():
         except (SyntaxError, bdb.BdbSyntaxError):
             traceback.print_exc()
             break
-        except:
+        except Exception:
             traceback.print_exc()
             print "Uncaught exception. Entering post mortem debugging"
             print "Running 'cont' or 'step' will restart the program"
