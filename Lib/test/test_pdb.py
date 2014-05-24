@@ -1369,6 +1369,36 @@ class PdbTestCase(unittest.TestCase):
             'Fail to print a safe representation of the return value.'
             .format(expected, stdout))
 
+    @unittest.skipIf(sys.platform == 'win32', 'a posix test')
+    def test_issue_20269(self):
+        # Inconsistent behavior in pdb when pressing Ctrl-C.
+        script = """
+            def foo():
+                i = 1
+                while i:
+                    i += 1
+
+            foo()
+        """
+        commands = """
+            next
+            !import signal, os
+            !def kill(sig, frame): os.kill(os.getpid(), signal.SIGINT)
+            !signal.signal(signal.SIGALRM, kill)
+            !signal.alarm(1)
+            next
+            i = 0
+            quit
+        """
+        expected = "Program interrupted. (Use 'cont' to resume).\n"
+        filename = 'main.py'
+        stdout, stderr = self.run_pdb(script, commands, filename)
+        stdout = normalize(stdout, filename)
+        self.assertTrue(expected in stdout,
+            '\n\nExpected:\n{}\nGot:\n{}\n'
+            'Fail to interrupt the debugger with <Ctl-C>.'
+            .format(expected, stdout))
+
     def tearDown(self):
         support.unlink(support.TESTFN)
 
