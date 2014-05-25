@@ -18,13 +18,15 @@
 
 The pdb command line interface remains unchanged except for the new ``detach`` pdb command. All the versions of pdb-clone implement the most recent python3 features of pdb, as defined in the python3 `pdb documentation`_.
 
-See also the `README <http://code.google.com/p/pdb-clone/wiki/ReadMe>`_.
+See also the `README <http://code.google.com/p/pdb-clone/wiki/ReadMe>`_ and the project `home page <http://code.google.com/p/pdb-clone/>`_.
+
+Report bugs to the `issue tracker <http://code.google.com/p/pdb-clone/issues/list>`_.
 
 **Install**
 
-For example, to install the Python 3 version of pdb-clone version 1.6 with pip::
+For example, to install the Python 3 version of pdb-clone version 1.7 with pip::
 
-    sudo pip install pdb-clone==1.6.py3 --egg
+    sudo pip install pdb-clone==1.7.py3 --egg
 
 This requires *pip 1.2* or above. *pip 1.2* fixes `pip issue 3 <https://github.com/pypa/pip/issues/3>`_ by adding the ``--egg`` option so as not to use ``single-version-externally-managed``. Unfortunately ``single-version-externally-managed`` seems to break all the Python packages based on the standard library ``distutils``.
 
