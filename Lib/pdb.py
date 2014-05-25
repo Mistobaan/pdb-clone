@@ -374,6 +374,8 @@ line_prefix = '\n-> '   # Probably a better default
 
 class Pdb(bdb.Bdb, cmd.Cmd):
 
+    _previous_sigint_handler = None
+
     def __init__(self, completekey='tab', stdin=None, stdout=None, skip=None,
                  nosigint=False, debug=False):
         bdb.Bdb.__init__(self, skip=skip)
@@ -395,7 +397,6 @@ class Pdb(bdb.Bdb, cmd.Cmd):
             pass
         self.allow_kbdint = False
         self.nosigint = nosigint
-        self._previous_sigint_handler = None
 
         # Read $HOME/.pdbrc and ./.pdbrc
         self.rcLines = []
@@ -441,7 +442,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
     def set_sigint_handler(self):
         if not self.nosigint:
             try:
-                self._previous_sigint_handler = \
+                Pdb._previous_sigint_handler = \
                     signal.signal(signal.SIGINT, self.sigint_handler)
             except ValueError:
                 # ValueError happens when do_continue() is invoked from
