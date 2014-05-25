@@ -718,6 +718,52 @@ def test_pdb_set_frame_locals():
     (Pdb) continue
     """
 
+def test_pdb_issue_20766():
+    """Testing for reference leaks when setting SIGINT handler.
+
+    >>> def set_trace():
+    ...     import sys; from pdb_clone import pdb
+    ...     pdbinst = pdb.Pdb()
+    ...     pdbinst.set_trace(sys._getframe().f_back)
+    ...     return pdbinst
+
+    >>> def foo(prev_pdbinst):
+    ...     import gc
+    ...     pdbinst = set_trace();
+    ...     gc.collect()
+    ...     references = gc.get_referents(pdbinst._previous_sigint_handler)
+    ...     print(references)
+    ...     if prev_pdbinst and prev_pdbinst not in references:
+    ...         print('self._previous_sigint_handler does not refer to the'
+    ...               ' previous Pdb instance.')
+    ...     return pdbinst
+
+    >>> def test_function():
+    ...     i = 2
+    ...     pdbinst = None
+    ...     while i:
+    ...         i -= 1
+    ...         pdbinst = foo(pdbinst)
+
+    >>> pti = PdbTestInput([
+    ...     'continue',
+    ...     'continue',
+    ... ])
+    >>> try:
+    ...     pti.__enter__()
+    ...     test_function()
+    ... finally:
+    ...     pti.__exit__()
+    > <doctest test.test_pdb.test_pdb_issue_20766[1]>(4)foo()
+    -> gc.collect()
+    (Pdb) continue
+    ['signal']
+    > <doctest test.test_pdb.test_pdb_issue_20766[1]>(4)foo()
+    -> gc.collect()
+    (Pdb) continue
+    ['signal']
+    self._previous_sigint_handler does not refer to the previous Pdb instance.
+    """
 
 def normalize(result, filename='', strip_bp_lnum=False):
     """Normalize a test result."""
