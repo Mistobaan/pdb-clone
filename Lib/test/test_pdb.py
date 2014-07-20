@@ -923,6 +923,97 @@ def test_pdb_next_command_subiterator():
     (Pdb) continue
     """
 
+def test_thread_command():
+    """Testing the thread command.
+
+    >>> class State():
+    ...     def __init__(self): self.running = True
+    ...     def stop(self): self.running = False
+    ...     def __bool__(self): return self.running
+
+    >>> def deadlock(lock1, lock2, state):
+    ...     cnt = 0
+    ...     while state:
+    ...         with lock1:
+    ...             while state:
+    ...                 if lock2.acquire(timeout=.020):
+    ...                     deadlocked = False
+    ...                     cnt += 1
+    ...                     lock2.release()
+    ...                     break
+    ...                 else:
+    ...                     deadlocked = True
+
+    >>> def test_function():
+    ...     locks = (threading.Lock(), threading.Lock())
+    ...     t1 = threading.Thread(name='Thread_1', target=deadlock,
+    ...                                 args=(locks[0], locks[1], State()))
+    ...     t1.start()
+    ...     state2 = State()
+    ...     t2 = threading.Thread(name='Thread_2', target=deadlock,
+    ...                                 args=(locks[1], locks[0], state2))
+    ...     t2.start()
+    ...     tlist = [t1, t2]
+    ...
+    ...     from pdb_clone import pdb; pdb.Pdb(nosigint=True).set_trace()
+    ...     while tlist:
+    ...         for (i, t) in enumerate(tlist):
+    ...             t.join(.020)
+    ...             if not t.is_alive():
+    ...                 del tlist[i]
+
+    >>> with PdbTestInput([  # doctest: +ELLIPSIS
+    ...                    'time.sleep(.100)',
+    ...                    'thread',
+    ...                    'thread 2',
+    ...                    'thread',
+    ...                    'state.stop()',
+    ...                    'time.sleep(.100)',
+    ...                    'thread 1',
+    ...                    'state2.stop()',
+    ...                    'time.sleep(.100)',
+    ...                    'thread',
+    ...                    'continue']):
+    ...     test_function()
+    > <doctest test.test_pdb.test_thread_command[2]>(13)test_function()
+    -> while tlist:
+    (Pdb) time.sleep(.100)
+    (Pdb) thread
+       Nb  Name               Identifier       Stack entry
+    +*   1 MainThread          ... <doctest test.test_pdb.test_thread_command[2]>(13)test_function()
+                                               -> while tlist:
+         2 Thread_1            ... <doctest test.test_pdb.test_thread_command[1]>(6)deadlock()
+                                               -> if lock2.acquire(timeout=.020):
+         3 Thread_2            ... <doctest test.test_pdb.test_thread_command[1]>(6)deadlock()
+                                               -> if lock2.acquire(timeout=.020):
+    (Pdb) thread 2
+    > <doctest test.test_pdb.test_thread_command[1]>(6)deadlock()
+    -> if lock2.acquire(timeout=.020):
+    (Pdb) thread
+       Nb  Name               Identifier       Stack entry
+    +    1 MainThread          ... <doctest test.test_pdb.test_thread_command[2]>(13)test_function()
+                                               -> while tlist:
+     *   2 Thread_1            ... <doctest test.test_pdb.test_thread_command[1]>(6)deadlock()
+                                               -> if lock2.acquire(timeout=.020):
+         3 Thread_2            ... <doctest test.test_pdb.test_thread_command[1]>(6)deadlock()
+                                               -> if lock2.acquire(timeout=.020):
+    (Pdb) state.stop()
+    (Pdb) time.sleep(.100)
+    (Pdb) thread 1
+    > <doctest test.test_pdb.test_thread_command[2]>(13)test_function()
+    -> while tlist:
+    (Pdb) state2.stop()
+    (Pdb) time.sleep(.100)
+    (Pdb) thread
+       Nb  Name               Identifier       Stack entry
+    +*   1 MainThread          ... <doctest test.test_pdb.test_thread_command[2]>(13)test_function()
+                                               -> while tlist:
+    (Pdb) continue
+    """
+
+if not threading:
+    def test_thread_command(): pass
+
 def test_pdb_set_frame_locals():
     """This tests setting local variables.
 
