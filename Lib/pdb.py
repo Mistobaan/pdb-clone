@@ -87,7 +87,7 @@ import socket
 import readline
 import shlex
 import pydoc
-
+from operator import attrgetter
 
 class Restart(Exception):
     """Causes a debugger to be restarted for the debugged python program."""
@@ -383,6 +383,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         if stdout:
             self.use_rawinput = 0
         self.prompt = '(Pdb) '
+        self.pdb_thread = None
         self.is_debug_instance = debug
         self.aliases = {}
         self.displaying = {}
@@ -460,6 +461,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         self.curindex = 0
         self.curframe = None
         self.tb_lineno.clear()
+        self.current_thread = None
 
     def setup(self, f, tb):
         self.forget()
@@ -606,7 +608,11 @@ class Pdb(bdb.Bdb, cmd.Cmd):
             self.forget()
             return
         self.print_stack_entry(self.stack[self.curindex])
-        self._cmdloop()
+        try:
+            self.pdb_toplevel_frame = frame
+            self._cmdloop()
+        finally:
+            self.pdb_toplevel_frame = None
         self.forget()
 
     def displayhook(self, obj):
@@ -1672,6 +1678,97 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         if len(args) == 0: return
         if args[0] in self.aliases:
             del self.aliases[args[0]]
+
+    def _do_thread(self, arg, current_frames, tlist):
+        if not arg:
+            self.message('   {:3} {:18} {:16} {}'.format(
+                    'Nb', 'Name', 'Identifier', 'Stack entry'))
+            for (nb, t) in enumerate(tlist, start=1):
+                prefix = '+' if t is self.pdb_thread else ' '
+                prefix += '*' if t is self.current_thread else ' '
+                if t is self.pdb_thread:
+                    frame = self.pdb_toplevel_frame
+                else:
+                    frame = current_frames.get(t.ident)
+                if frame:
+                    stack_entry = self.format_stack_entry(
+                            (frame, frame.f_lineno), line_prefix).split('\n')
+                    self.message('{} {:3d} {:18} {:16d} {}\n{:43}{}'.format(
+                        prefix, nb, t.name, t.ident, stack_entry[0],
+                        '', stack_entry[1]))
+                else:
+                    self.message('{} {:3d} {:18} {:16d} {}'.format(
+                        prefix, nb, t.name, t.ident, 'Thread not active.'))
+            return
+
+        t = frame = None
+        try:
+            idx = int(arg)
+            if idx > 0:
+                t = tlist[idx - 1]
+        except (ValueError, IndexError):
+            pass
+        if t is None:
+            self.error(
+                'Invalid thread number, must be in a range from 1 to {:d}.'
+                .format(len(tlist)))
+        elif t is self.pdb_thread:
+            frame = self.pdb_toplevel_frame
+        else:
+            try:
+                frame = current_frames[t.ident]
+            except IndexError:
+                self.error('Internal error, the thread "{}" is not active.'
+                .format(t.name))
+        if frame:
+            self.setup(frame, None)
+            self.current_thread = t
+            self.print_stack_entry(self.stack[self.curindex])
+
+    def do_thread(self, arg):
+        """th(read) [threadnumber]
+        Without argument, display a summary of all active threads.
+        The summary prints for each thread:
+           1. the thread number assigned by pdb
+           2. the thread name
+           3. the python thread identifier
+           4. the current stack frame summary for that thread
+        An asterisk '*' to the left of the pdb thread number indicates the
+        current thread, a plus sign '+' indicates the thread being traced by
+        pdb.
+
+        With a pdb thread number as argument, make this thread the current
+        thread. The 'where', 'up' and 'down' commands apply now to the frame
+        stack of this thread. The current scope is now the frame currently
+        executed by this thread at the time the command is issued and the
+        'list', 'll', 'args', 'p', 'pp', 'source' and 'interact' commands are
+        run in the context of that frame. Note that this frame may bear no
+        relationship (for a non-deadlocked thread) to that thread's current
+        activity by the time you are examining the frame.
+        This command does not stop the thread.
+        """
+        # Import the threading module in the main interpreter to get an
+        # enumeration of the main interpreter threads.
+        # Do not use relative import detection to avoid the RuntimeWarning:
+        # Parent module 'pdb_clone' not found while handling absolute import
+        try:
+            threading = __import__('threading', level=0)
+        except ImportError:
+            threading = __import__('dummy_threading', level=0)
+
+
+        if not self.pdb_thread:
+            self.pdb_thread = threading.current_thread()
+        if not self.current_thread:
+            self.current_thread = self.pdb_thread
+        current_frames = sys._current_frames()
+        tlist = sorted(threading.enumerate(), key=attrgetter('name', 'ident'))
+        try:
+            self._do_thread(arg, current_frames, tlist)
+        finally:
+            # For some reason this local must be explicitly deleted in order
+            # to release the subinterpreter.
+            del current_frames
 
     def complete_unalias(self, text, line, begidx, endidx):
         return [a for a in self.aliases if a.startswith(text)]
