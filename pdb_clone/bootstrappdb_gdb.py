@@ -203,6 +203,8 @@ class PyPdb(gdb.Command):
                 raise PdbLocalError('Interpreter is being finalized.')
             elif name == 'Py_NewInterpreter':
                 raise PdbLocalError('A subinterpreter is being initialized.')
+            elif name == 'Py_MakePendingCalls' or name == 'Py_AddPendingCall':
+                raise PdbLocalError('A signal is being processed.')
             elif name == 'dlopen':
                 in_dlopen = True
             elif name == '_PyImport_GetDynLoadFunc':
