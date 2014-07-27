@@ -1909,7 +1909,7 @@ def runcall(*args, **kwds):
 def set_trace():
     Pdb().set_trace(sys._getframe().f_back)
 
-def set_trace_remote(frame=None, host=b'127.0.0.1', port=7935):
+def set_trace_remote(host=b'127.0.0.1', port=7935, frame=None):
     # When the set_trace_remote() hard-coded breakpoint is set in a loop
     # iterating over sys.modules, allowing 'host' to be an str instance could
     # possibly raise a RuntimeError (dictionary changed size) after the bind()
