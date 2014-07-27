@@ -166,9 +166,18 @@ call_set_trace_remote(PyThreadState *mainstate, PyObject **prsock)
         if (func == NULL)
             PyErr_SetString(PyExc_AttributeError,
                         "pdb has no attribute 'set_trace_remote'");
-        else
-            *prsock = PyObject_CallFunctionObjArgs(
-                                            func, mainstate->frame, NULL);
+        else {
+            PyObject *kw = PyDict_New();
+            if (kw != NULL) {
+                if (PyDict_SetItemString(kw, "frame",
+                                        (PyObject *)mainstate->frame) == 0) {
+                    PyObject *empty_tuple = PyTuple_New(0);
+                    *prsock = PyObject_Call(func, empty_tuple, kw);
+                    Py_DECREF(empty_tuple);
+                }
+                Py_DECREF(kw);
+            }
+        }
     }
 
 swap:
