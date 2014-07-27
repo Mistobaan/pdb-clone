@@ -1536,7 +1536,8 @@ class PdbTestCase(unittest.TestCase):
 class RemoteDebugging(unittest.TestCase):
     """Remote debugging support."""
 
-    def run_pdb_remotely(self, source, commands):
+    def run_pdb_remotely(self, source, commands,
+                                            address=pdb_attach.DFLT_ADDRESS):
         """Run 'source' in a spawned process."""
 
         class Process(threading.Thread):
@@ -1551,7 +1552,7 @@ class RemoteDebugging(unittest.TestCase):
         while True:
             try:
                 stdout = io.StringIO()
-                pdb_attach.attach(stdin=stdin, stdout=stdout)
+                pdb_attach.attach(address, stdin, stdout)
                 break
             except (ConnectionRefusedError, SystemExit):
                 count += 1
@@ -1631,6 +1632,20 @@ class RemoteDebuggingTestCase(RemoteDebugging):
              ]
         )
         self.assertIn(some_text, stdout)
+
+    def test_issue_10(self):
+        # Check that one can use a non default inet address.
+        address = (b'localhost', 6825)
+        stdout = self.run_pdb_remotely("""if 1:
+            from pdb_clone import pdb
+            pdb.set_trace_remote({})
+            """.format(str(address).strip('()')),
+            [
+                'detach',
+             ],
+             address
+        )
+        self.assertIn(str(address), stdout)
 
 @unittest.skipIf(threading is None, 'threading module is required')
 class PdbTestCaseUsingRemoteDebugging(RemoteDebugging):
