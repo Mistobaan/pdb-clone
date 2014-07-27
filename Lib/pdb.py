@@ -1903,7 +1903,7 @@ def runcall(*args, **kwds):
 def set_trace():
     Pdb().set_trace(sys._getframe().f_back)
 
-def set_trace_remote(frame=None, host='127.0.0.1', port=7935):
+def set_trace_remote(host='127.0.0.1', port=7935, frame=None):
     rsock = RemoteSocket((host, port))
     pdb = Pdb(stdin=rsock, stdout=rsock)
     if not frame:
