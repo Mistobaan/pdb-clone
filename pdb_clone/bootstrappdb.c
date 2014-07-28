@@ -37,12 +37,50 @@ static PyTypeObject pdbtracerctxtype = {
     "Pdb tracer context",               /* tp_doc         */
 };
 
+static int
+set_dict_kwds(PyObject *kw, PyObject *address, PyFrameObject *frame)
+{
+    PyObject *addlist;
+    PyObject *host = NULL;
+    PyObject *port = NULL;
+    int rc = -1;
+
+    assert(PyUnicode_Check(address));
+    addlist = PyUnicode_Split(address, NULL, -1);
+    if (addlist == NULL)
+        return -1;
+    if (Py_SIZE(addlist) >= 1) {
+        host = PyUnicode_EncodeLocale(PyList_GET_ITEM(addlist, 0), NULL);
+        if (host == NULL)
+            goto err;
+        if (PyDict_SetItemString(kw, "host", host) != 0)
+            goto err;
+    }
+    if (Py_SIZE(addlist) >= 2) {
+        port = PyLong_FromUnicodeObject(PyList_GET_ITEM(addlist, 1), 10);
+        if (port == NULL)
+            goto err;
+        if (PyDict_SetItemString(kw, "port", port) != 0)
+            goto err;
+    }
+
+    if (PyDict_SetItemString(kw, "frame", (PyObject *)frame) != 0)
+        goto err;
+
+    rc = 0;
+err:
+    Py_DECREF(addlist);
+    Py_XDECREF(host);
+    Py_XDECREF(port);
+    return rc;
+}
+
 /* Set up pdb in a sub-interpreter to handle the cases where we are stopped in
  * a loop iterating over sys.modules, or within the import system, or while
  * sys.modules or builtins are empty (such as in some test cases), and to
  * avoid circular imports. */
 int
-bootstrappdb(void *unused)
+bootstrappdb(PyObject *address)
 {
     PyThreadState *tstate;
     Py_tracefunc tracefunc;
@@ -78,8 +116,7 @@ bootstrappdb(void *unused)
         else {
             PyObject *kw = PyDict_New();
             if (kw != NULL) {
-                if (PyDict_SetItemString(kw, "frame",
-                                        (PyObject *)mainstate->frame) == 0) {
+                if (set_dict_kwds(kw, address, mainstate->frame) == 0) {
                     PyObject *empty_tuple = PyTuple_New(0);
                     rsock = PyObject_Call(func, empty_tuple, kw);
                     Py_DECREF(empty_tuple);
@@ -130,6 +167,18 @@ fin:
     Py_XDECREF(func);
     Py_XDECREF(rsock);
     Py_XDECREF(context);
+    return rc;
+}
+
+int
+_bootstrappdb(char *arg)
+{
+    int rc;
+    PyObject *address = PyUnicode_DecodeLocale(arg, NULL);
+    if (address == NULL)
+        return -1;
+    rc = bootstrappdb(address);
+    Py_DECREF(address);
     return rc;
 }
 
