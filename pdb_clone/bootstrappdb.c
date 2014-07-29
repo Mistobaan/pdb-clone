@@ -14,7 +14,8 @@ typedef struct {
 
 /* Forward declarations. */
 static void pdbtracerctx_dealloc(pdbtracerctxobject *);
-static PyThreadState * call_set_trace_remote(PyThreadState *, PyObject **);
+static PyThreadState * call_set_trace_remote(PyThreadState *,
+                                                PyObject *, PyObject **);
 
 static PyTypeObject pdbtracerctxtype = {
     PyObject_HEAD_INIT(NULL)
@@ -47,12 +48,50 @@ threadstate_getframe(PyThreadState *ignored)
     return bootstrappdb_tstate->frame;
 }
 
+static int
+set_dict_kwds(PyObject *kw, PyObject *address, PyFrameObject *frame)
+{
+    PyObject *split_name;
+    PyObject *addlist = NULL;
+    PyObject *port = NULL;
+    int rc = -1;
+
+    assert(PyString_Check(address));
+    split_name = PyString_FromString("split");
+    if (split_name == NULL)
+        return -1;
+    addlist = PyObject_CallMethodObjArgs(address, split_name, NULL);
+    if (addlist == NULL)
+        goto err;
+    if (Py_SIZE(addlist) >= 1 &&
+            PyDict_SetItemString(kw, "host", PyList_GET_ITEM(addlist, 0)) != 0)
+        goto err;
+    if (Py_SIZE(addlist) >= 2) {
+        port = PyInt_FromString(
+                PyString_AsString(PyList_GET_ITEM(addlist, 1)), NULL, 10);
+        if (port == NULL)
+            goto err;
+        if (PyDict_SetItemString(kw, "port", port) != 0)
+            goto err;
+    }
+
+    if (PyDict_SetItemString(kw, "frame", (PyObject *)frame) != 0)
+        goto err;
+
+    rc = 0;
+err:
+    Py_DECREF(split_name);
+    Py_XDECREF(addlist);
+    Py_XDECREF(port);
+    return rc;
+}
+
 /* Set up pdb in a sub-interpreter to handle the cases where we are stopped in
  * a loop iterating over sys.modules, or within the import system, or while
  * sys.modules or builtins are empty (such as in some test cases), and to
  * avoid circular imports. */
 int
-bootstrappdb(void *unused)
+bootstrappdb(PyObject *address)
 {
     PyThreadState *tstate;
     Py_tracefunc tracefunc;
@@ -74,7 +113,7 @@ bootstrappdb(void *unused)
     if (PyType_Ready(&pdbtracerctxtype) < 0)
         return -1;
 
-    if ((tstate=call_set_trace_remote(mainstate, &rsock)) == NULL)
+    if ((tstate=call_set_trace_remote(mainstate, address, &rsock)) == NULL)
         return -1;
 
     tracefunc = tstate->c_tracefunc;
@@ -119,8 +158,21 @@ fin:
     return rc;
 }
 
+int
+_bootstrappdb(char *arg)
+{
+    int rc;
+    PyObject *address = PyString_FromString(arg);
+    if (address == NULL)
+        return -1;
+    rc = bootstrappdb(address);
+    Py_DECREF(address);
+    return rc;
+}
+
 static PyThreadState *
-call_set_trace_remote(PyThreadState *mainstate, PyObject **prsock)
+call_set_trace_remote(PyThreadState *mainstate,
+                        PyObject *address, PyObject **prsock)
 {
     PyObject *saved_globals;
     PyObject *saved_locals;
@@ -169,8 +221,7 @@ call_set_trace_remote(PyThreadState *mainstate, PyObject **prsock)
         else {
             PyObject *kw = PyDict_New();
             if (kw != NULL) {
-                if (PyDict_SetItemString(kw, "frame",
-                                        (PyObject *)mainstate->frame) == 0) {
+                if (set_dict_kwds(kw, address, mainstate->frame) == 0) {
                     PyObject *empty_tuple = PyTuple_New(0);
                     *prsock = PyObject_Call(func, empty_tuple, kw);
                     Py_DECREF(empty_tuple);

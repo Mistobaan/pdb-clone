@@ -181,8 +181,13 @@ class PyPdb(gdb.Command):
             raise PdbFatalError('Please use a Python program built'
                                             ' with debugging symbols.')
 
-        port = 7935
-        already_in_use(('127.0.0.1', port))
+        address = arg.split()
+        try:
+            address[1] = int(address[1])
+        except (IndexError, ValueError):
+            raise PdbFatalError(
+                        'The "host port" arguments are required".')
+        already_in_use(tuple(address))
 
         if int(tracing_possible.value()):
             raise PdbLocalError(
@@ -238,7 +243,8 @@ class PyPdb(gdb.Command):
                     raise PdbFatalError(
                             'Could not load the bootstrappdb library.')
 
-        if gdb_execute('call Py_AddPendingCall(bootstrappdb, 0)') != '0':
+        if (gdb_execute('call Py_AddPendingCall(_bootstrappdb, "%s %s")' %
+                            (address[0], address[1])) != '0'):
             raise PdbFatalError('Failed to setup bootstrappdb.')
 
         method = ''
@@ -263,7 +269,7 @@ class PyPdb(gdb.Command):
         print("\nPdb has been setup for remote debugging%s.\n"
             "Enter now the 'detach' or 'quit' gdb command, and"
             " connect to pdb on port %d with 'pdb_attach.py'." %
-            (method, port))
+            (method, address[1]))
 
 PyPdb()
 

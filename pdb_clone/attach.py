@@ -381,7 +381,8 @@ class GdbSocket(asynchat.async_chat):
                 # same loop.
                 if not self.ctx or not self.ctx.stmt.skip():
                     self.state = self.ST_PDB
-                    self.cli_command('py-pdb')
+                    self.cli_command('py-pdb %s %s' %
+                                        (self.address[0], self.address[1]))
                 else:
                     self.exit()
 
