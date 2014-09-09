@@ -1,16 +1,19 @@
 #include "Python.h"
 #include "frameobject.h"
 
-/* Prevent bootstraping pdb while a pdb subinterpreter is alive. */
-static int alive_pdb_context = 0;
-
 static PyThreadState *bootstrappdb_tstate = NULL;
 
-/* A dummy object that ends the tracer subinterpreter when deallocated. */
+/* A dummy object that ends the pdb's subinterpreter when deallocated. */
 typedef struct {
     PyObject_HEAD
     PyThreadState *tstate;
 } pdbtracerctxobject;
+
+/* Only one instance of pdbtracerctxobject at any given time.
+ * Note that we do not own a reference to this object. The 'stdin' pdb
+ * attribute owns a reference to this object, 'stdin' being an instance of
+ * pdb.RemoteSocket. */
+static pdbtracerctxobject *current_pdbctx = NULL;
 
 /* Forward declarations. */
 static void pdbtracerctx_dealloc(pdbtracerctxobject *);
@@ -99,14 +102,13 @@ bootstrappdb(PyObject *address)
     PyObject *type, *value, *traceback;
     PyThreadState *mainstate = PyThreadState_GET();
     PyObject *rsock = NULL;
-    pdbtracerctxobject *context = NULL;
     int rc = -1;
 
     if (!Py_IsInitialized())
         return 0;
 
     /* See python issue 21033. */
-    if (mainstate->tracing || alive_pdb_context)
+    if (mainstate->tracing || current_pdbctx)
         return 0;
 
     pdbtracerctxtype.tp_new = PyType_GenericNew;
@@ -128,14 +130,14 @@ bootstrappdb(PyObject *address)
     }
 
     /* The sub-interpreter remains alive until the pdb socket is closed. */
-    context = (pdbtracerctxobject *) pdbtracerctxtype.tp_alloc(
+    current_pdbctx = (pdbtracerctxobject *) pdbtracerctxtype.tp_alloc(
                                                     &pdbtracerctxtype, 0);
-    if (context == NULL)
+    if (current_pdbctx == NULL)
         goto err;
-    if (PyObject_SetAttrString(rsock, "_subinterp", (PyObject *)context) != 0)
+    if (PyObject_SetAttrString(rsock, "_pdbtracerctxobject",
+                                      (PyObject *)current_pdbctx) != 0)
         goto err;
-    context->tstate = tstate;
-    alive_pdb_context = 1;
+    current_pdbctx->tstate = tstate;
 
     /* Swap the trace function between both tread states. */
     PyEval_SetTrace(NULL, NULL);
@@ -154,7 +156,7 @@ err:
         PyErr_Restore(type, value, traceback);
 fin:
     Py_XDECREF(rsock);
-    Py_XDECREF(context);
+    Py_XDECREF(current_pdbctx);
     return rc;
 }
 
@@ -257,7 +259,7 @@ pdbtracerctx_dealloc(pdbtracerctxobject *self)
         self->tstate = NULL;
     }
     Py_TYPE(self)->tp_free((PyObject*)self);
-    alive_pdb_context = 0;
+    current_pdbctx = NULL;
 }
 
 PyDoc_STRVAR(bootstrappdb_doc, "A module to bootstrap pdb from gdb.");
