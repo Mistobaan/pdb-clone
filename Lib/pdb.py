@@ -134,7 +134,6 @@ class RemoteSocket:
         self.server = None
         self.socket = None
         self.madefile = None
-        self._subinterp = None
 
     def connect(self):
         if self.state is self.ST_INIT:
@@ -223,16 +222,6 @@ class RemoteSocket:
         if self.server:
             self.server.close()
             self.server = None
-
-    # After this method returns, most objects, including builtins, cannot be
-    # referenced anymore by the Pdb or RemoteSocket methods.
-    def terminate(self):
-        if self.state is self.ST_CONNECTED:
-            self.close()
-
-        # Delete the pdb tracer context.
-        if self._subinterp:
-            self._subinterp = None
 
 def find_function(funcname, filename):
     cre = re.compile(r'def\s+%s\s*[(]' % re.escape(funcname))
@@ -423,10 +412,6 @@ class Pdb(bdb.Bdb, cmd.Cmd):
                                        # a command list
         self.commands_bnum = None # The breakpoint number for which we are
                                   # defining a list
-
-    def __del__(self):
-        if isinstance(self.stdin, RemoteSocket) and not self.is_debug_instance:
-            self.stdin.terminate()
 
     def close(self):
         if isinstance(self.stdin, RemoteSocket) and not self.is_debug_instance:
