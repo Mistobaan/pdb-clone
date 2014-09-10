@@ -1,7 +1,7 @@
 #include "Python.h"
 #include "frameobject.h"
 
-static PyThreadState *bootstrappdb_tstate = NULL;
+static PyThreadState *pdbhandler_tstate = NULL;
 
 /* A dummy object that ends the pdb's subinterpreter when deallocated. */
 typedef struct {
@@ -23,7 +23,7 @@ static PyThreadState * call_set_trace_remote(PyThreadState *,
 static PyTypeObject pdbtracerctxtype = {
     PyObject_HEAD_INIT(NULL)
     0,                                  /*ob_size         */
-    "bootstrappdb.context",             /* tp_name        */
+    "pdbhandler.context",               /* tp_name        */
     sizeof(pdbtracerctxobject),         /* tp_basicsize   */
     0,                                  /* tp_itemsize    */
     (destructor)pdbtracerctx_dealloc,   /* tp_dealloc     */
@@ -48,7 +48,7 @@ static PyTypeObject pdbtracerctxtype = {
 static struct _frame *
 threadstate_getframe(PyThreadState *ignored)
 {
-    return bootstrappdb_tstate->frame;
+    return pdbhandler_tstate->frame;
 }
 
 static int
@@ -94,7 +94,7 @@ err:
  * sys.modules or builtins are empty (such as in some test cases), and to
  * avoid circular imports. */
 int
-bootstrappdb(PyObject *address)
+pdbhandler(PyObject *address)
 {
     PyThreadState *tstate;
     Py_tracefunc tracefunc;
@@ -161,13 +161,13 @@ fin:
 }
 
 int
-_bootstrappdb(char *arg)
+pdbhandler_string(char *arg)
 {
     int rc;
     PyObject *address = PyString_FromString(arg);
     if (address == NULL)
         return -1;
-    rc = bootstrappdb(address);
+    rc = pdbhandler(address);
     Py_DECREF(address);
     return rc;
 }
@@ -209,7 +209,7 @@ call_set_trace_remote(PyThreadState *mainstate,
     mainstate->frame->f_globals = globals;
     mainstate->frame->f_locals = locals;
     _PyThreadState_GetFrame = threadstate_getframe;
-    bootstrappdb_tstate = mainstate;
+    pdbhandler_tstate = mainstate;
 
     if ((tstate=Py_NewInterpreter()) == NULL)
         goto swap;
@@ -237,7 +237,7 @@ swap:
     mainstate->frame->f_globals = saved_globals;
     mainstate->frame->f_locals = saved_locals;
     _PyThreadState_GetFrame = saved_tstate_getframe;
-    bootstrappdb_tstate = NULL;
+    pdbhandler_tstate = NULL;
 fin:
     Py_XDECREF(builtins_str);
     Py_XDECREF(builtins);
@@ -262,19 +262,19 @@ pdbtracerctx_dealloc(pdbtracerctxobject *self)
     current_pdbctx = NULL;
 }
 
-PyDoc_STRVAR(bootstrappdb_doc, "A module to bootstrap pdb from gdb.");
+PyDoc_STRVAR(pdbhandler_doc, "The pdbhandler module.");
 
 #ifndef PyMODINIT_FUNC  /* declarations for DLL import/export */
 #define PyMODINIT_FUNC void
 #endif
 /* Initialization function for the module. */
 PyMODINIT_FUNC
-initbootstrappdb(void)
+initpdbhandler(void)
 {
     pdbtracerctxtype.tp_new = PyType_GenericNew;
     if (PyType_Ready(&pdbtracerctxtype) < 0)
         return;
 
-    Py_InitModule3("bootstrappdb", NULL, bootstrappdb_doc);
+    Py_InitModule3("pdbhandler", NULL, pdbhandler_doc);
 }
 
