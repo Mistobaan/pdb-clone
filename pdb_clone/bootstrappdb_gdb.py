@@ -217,8 +217,8 @@ class PyPdb(gdb.Command):
             f = f.older()
 
         loader = ''
-        if not gdb.lookup_symbol('bootstrappdb')[0]:
-            mpath = module_fname('pdb_clone.bootstrappdb')
+        if not gdb.lookup_symbol('pdbhandler')[0]:
+            mpath = module_fname('pdb_clone.pdbhandler')
             if not os.path.isfile(mpath):
                 raise PdbFatalError('%s does not exist.' % mpath)
 
@@ -233,7 +233,7 @@ class PyPdb(gdb.Command):
                     loader = 'dlopen'
 
             # When dlopen fails, use load_dynamic which is safer than directly
-            # importing bootstrappdb as the _imp module is a builtin and
+            # importing pdbhandler as the _imp module is a builtin and
             # load_dynamic will succeed even when stopped in the import
             # machinery. Note that mixing multiple interpreters and the
             # PyGILState_*() API is unsupported by Python, and see also issue
@@ -244,15 +244,15 @@ class PyPdb(gdb.Command):
                     raise PdbLocalError('Stopped within load_dynamic.')
                 loader = 'load_dynamic'
                 state = gdb_execute('call (int)PyGILState_Ensure()')
-                rv = gdb_execute(LOAD_DYN % ('bootstrappdb', mpath))
+                rv = gdb_execute(LOAD_DYN % ('pdbhandler', mpath))
                 gdb_execute('call PyGILState_Release(%s)' % state)
                 if rv != '0':
                     raise PdbFatalError(
-                            'Could not load the bootstrappdb library.')
+                            'Could not load the pdbhandler library.')
 
-        if (gdb_execute('call Py_AddPendingCall(_bootstrappdb, "%s %s")' %
+        if (gdb_execute('call Py_AddPendingCall(pdbhandler_string, "%s %s")' %
                             (address[0], address[1])) != '0'):
-            raise PdbFatalError('Failed to setup bootstrappdb.')
+            raise PdbFatalError('Failed to setup pdbhandler.')
 
         method = ''
         if loader:

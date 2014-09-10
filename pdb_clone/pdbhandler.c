@@ -18,7 +18,7 @@ static void pdbtracerctx_dealloc(pdbtracerctxobject *);
 
 static PyTypeObject pdbtracerctxtype = {
     PyVarObject_HEAD_INIT(NULL, 0)
-    "bootstrappdb.context",             /* tp_name        */
+    "pdbhandler.context",               /* tp_name        */
     sizeof(pdbtracerctxobject),         /* tp_basicsize   */
     0,                                  /* tp_itemsize    */
     (destructor)pdbtracerctx_dealloc,   /* tp_dealloc     */
@@ -83,7 +83,7 @@ err:
  * sys.modules or builtins are empty (such as in some test cases), and to
  * avoid circular imports. */
 int
-bootstrappdb(PyObject *address)
+pdbhandler(PyObject *address)
 {
     PyThreadState *tstate;
     Py_tracefunc tracefunc;
@@ -173,13 +173,13 @@ fin:
 }
 
 int
-_bootstrappdb(char *arg)
+pdbhandler_string(char *arg)
 {
     int rc;
     PyObject *address = PyUnicode_DecodeLocale(arg, NULL);
     if (address == NULL)
         return -1;
-    rc = bootstrappdb(address);
+    rc = pdbhandler(address);
     Py_DECREF(address);
     return rc;
 }
@@ -198,23 +198,23 @@ pdbtracerctx_dealloc(pdbtracerctxobject *self)
     current_pdbctx = NULL;
 }
 
-PyDoc_STRVAR(bootstrappdb_doc, "A module to bootstrap pdb from gdb.");
+PyDoc_STRVAR(pdbhandler_doc, "The pdbhandler_doc module.");
 
-static struct PyModuleDef bootstrappdb_def = {
+static struct PyModuleDef pdbhandler_def = {
     PyModuleDef_HEAD_INIT,
-    "bootstrappdb",
-    bootstrappdb_doc,
+    "pdbhandler",
+    pdbhandler_doc,
     -1,
     NULL,
 };
 
 PyMODINIT_FUNC
-PyInit_bootstrappdb(void)
+PyInit_pdbhandler(void)
 {
     pdbtracerctxtype.tp_new = PyType_GenericNew;
     if (PyType_Ready(&pdbtracerctxtype) < 0)
         return NULL;
 
-    return PyModule_Create(&bootstrappdb_def);
+    return PyModule_Create(&pdbhandler_def);
 }
 
