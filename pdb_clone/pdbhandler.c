@@ -198,7 +198,7 @@ pdbtracerctx_dealloc(pdbtracerctxobject *self)
     current_pdbctx = NULL;
 }
 
-PyDoc_STRVAR(pdbhandler_doc, "The pdbhandler_doc module.");
+PyDoc_STRVAR(pdbhandler_doc, "The pdbhandler module.");
 
 static struct PyModuleDef pdbhandler_def = {
     PyModuleDef_HEAD_INIT,
