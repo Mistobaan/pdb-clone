@@ -136,8 +136,8 @@ setup(
     scripts = ['pdb-clone', 'pdb-attach'],
     ext_modules  =  [Extension('pdb_clone._bdb',
                         sources=['pdb_clone/_bdbmodule.c']),
-                     Extension('pdb_clone.bootstrappdb',
-                        sources=['pdb_clone/bootstrappdb.c'])],
+                     Extension('pdb_clone.pdbhandler',
+                        sources=['pdb_clone/pdbhandler.c'])],
     packages=['pdb_clone'],
 
     # meta-data
