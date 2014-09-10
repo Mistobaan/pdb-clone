@@ -374,6 +374,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         self.prompt = '(Pdb) '
         self.pdb_thread = None
         self.is_debug_instance = debug
+        self.closed = False
         self.aliases = {}
         self.displaying = {}
         self.mainpyfile = ''
@@ -413,7 +414,13 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         self.commands_bnum = None # The breakpoint number for which we are
                                   # defining a list
 
+    def __del__(self):
+        self.close()
+
     def close(self):
+        if self.closed:
+            return
+        self.closed = True
         if isinstance(self.stdin, RemoteSocket) and not self.is_debug_instance:
             self.stdin.close()
         if self._previous_sigint_handler:
