@@ -666,7 +666,7 @@ class Bdb(BdbTracer):
 
         # See PyFrame_GetLineNumber() in Objects/frameobject.c for why the
         # local trace functions must be deleted.
-        # This is also required by bootstrappdb: to terminate the
+        # This is also required by pdbhandler: to terminate the
         # subinterpreter where lives the pdb instance, there must be no
         # references to the pdb instance.
         if not frame:
