@@ -76,37 +76,47 @@ class Test(Command):
         result_tmplt = '{} ... {:d} tests with zero failures'
         optionflags = doctest.REPORT_ONLY_FIRST_FAILURE if self.stop else 0
         cnt = ok = 0
+        # Make sure we are testing the installed version of pdb_clone.
+        if 'pdb_clone' in sys.modules:
+            del sys.modules['pdb_clone']
+        sys.path.pop(0)
+        import pdb_clone
+
         for test in self.tests:
             cnt += 1
             with support.temp_cwd() as cwd:
                 sys.path.insert(0, os.getcwd())
-                # Some unittest tests spawn a new instance of pdb.
-                shutil.copytree(os.path.join(support.SAVEDCWD, 'pdb_clone'),
-                                                os.path.join(cwd, 'pdb_clone'))
-                shutil.copyfile(os.path.join(support.SAVEDCWD, 'pdb-clone'),
-                                        os.path.join(cwd, 'pdb-clone'))
-                abstest = self.testdir + '.' + test
-                module = importlib.import_module(abstest)
-                suite = defaultTestLoader.loadTestsFromModule(module)
-                unittest_count = suite.countTestCases()
-                # Change the module name to allow correct doctest checks.
-                module.__name__ = 'test.' + test
-                print('{}:'.format(abstest))
-                f, t = doctest.testmod(module, verbose=self.detail,
-                                                        optionflags=optionflags)
-                if f:
-                    print('{:d} of {:d} doctests failed'.format(f, t))
-                elif t:
-                    print(result_tmplt.format('doctest', t))
-
                 try:
-                    support.run_unittest(suite)
-                except support.TestFailed as msg:
-                    print('test', test, 'failed --', msg)
-                else:
-                    print(result_tmplt.format('unittest', unittest_count))
-                    if not f:
-                        ok += 1
+                    savedcwd = support.SAVEDCWD
+                    shutil.copytree(os.path.join(savedcwd, 'testsuite'),
+                                             os.path.join(cwd, 'testsuite'))
+                    # Some unittest tests spawn pdb-clone.
+                    shutil.copyfile(os.path.join(savedcwd, 'pdb-clone'),
+                                            os.path.join(cwd, 'pdb-clone'))
+                    abstest = self.testdir + '.' + test
+                    module = importlib.import_module(abstest)
+                    suite = defaultTestLoader.loadTestsFromModule(module)
+                    unittest_count = suite.countTestCases()
+                    # Change the module name to allow correct doctest checks.
+                    module.__name__ = 'test.' + test
+                    print('{}:'.format(abstest))
+                    f, t = doctest.testmod(module, verbose=self.detail,
+                                           optionflags=optionflags)
+                    if f:
+                        print('{:d} of {:d} doctests failed'.format(f, t))
+                    elif t:
+                        print(result_tmplt.format('doctest', t))
+
+                    try:
+                        support.run_unittest(suite)
+                    except support.TestFailed as msg:
+                        print('test', test, 'failed --', msg)
+                    else:
+                        print(result_tmplt.format('unittest', unittest_count))
+                        if not f:
+                            ok += 1
+                finally:
+                    sys.path.pop(0)
         failed = cnt - ok
         cnt = failed if failed else ok
         plural = 's' if cnt > 1 else ''
@@ -124,8 +134,8 @@ setup(
     scripts = ['pdb-clone', 'pdb-attach'],
     ext_modules  =  [Extension('pdb_clone._bdb',
                         sources=['pdb_clone/_bdbmodule.c'], optional=True),
-                     Extension('pdb_clone.pdbhandler',
-                        sources=['pdb_clone/pdbhandler.c'], optional=True)],
+                     Extension('pdb_clone._pdbhandler',
+                        sources=['pdb_clone/_pdbhandler.c'], optional=True)],
     packages = ['pdb_clone'],
 
     # meta-data
