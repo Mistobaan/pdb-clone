@@ -43,6 +43,7 @@ class AttachSocket(asynchat.async_chat, cmd.Cmd):
         self.data = b''
         self.remote = ''
         self.pid = 0
+        self._previous_sigint_handler = None
 
     def message(self, *objs, sep=' ', end='\n', flush=False):
         print(*objs, file=self.stdout, sep=sep, end=end, flush=flush)
@@ -71,6 +72,8 @@ class AttachSocket(asynchat.async_chat, cmd.Cmd):
 
     def handle_close (self):
         if self.connected:
+            if self._previous_sigint_handler:
+                signal.signal(signal.SIGINT, self._previous_sigint_handler)
             content = utf8_decode(self.data)
             if content:
                 self.message(content.rstrip('\n'))
@@ -90,10 +93,31 @@ class AttachSocket(asynchat.async_chat, cmd.Cmd):
         if self.data:
             self.interaction()
 
+    def connect_retry(self, address, verbose):
+        skip_connect = 5
+        count = 0
+        while not self.connected:
+            try:
+                self.connect(address)
+            except ConnectionRefusedError:
+                # Skip printing the first connection failures.
+                if count >= skip_connect and verbose:
+                    if count == skip_connect:
+                        print('Connecting to remote pdb' +
+                                skip_connect * '.', end='', flush=True)
+                    else:
+                        print('.', end='', flush=True)
+                count += 1
+                if count >= 20:
+                    self.close()
+                    raise
+                time.sleep(0.200)
+
     def get_header(self, line):
         if line.startswith('PROCESS_PID:'):
             self.pid = int(line.split(':')[1])
-            signal.signal(signal.SIGINT, self.sigint_handler)
+            self._previous_sigint_handler = signal.signal(signal.SIGINT,
+                                                        self.sigint_handler)
         elif line.startswith('PROCESS_NAME:'):
             self.remote = line.split(':', 1)[1]
             msg = ('Connected to %s at %s' %
@@ -311,7 +335,8 @@ class GdbSocket(asynchat.async_chat):
                     if attempts == skip_connect:
                         print('Connecting to remote pdb' +
                                 skip_connect * '.', end='', flush=True)
-                    print('.', end='', flush=True)
+                    else:
+                        print('.', end='', flush=True)
                 attempts += 1
                 if attempts > 40:
                     asock.close()
@@ -505,11 +530,11 @@ def attach_loop(argv, libpath):
         print(result)
     return error
 
-def attach(address=DFLT_ADDRESS, stdin=None, stdout=None):
+def attach(address=DFLT_ADDRESS, stdin=None, stdout=None, verbose=True):
     connections = {}
     asock = AttachSocket(connections, stdin=stdin, stdout=stdout)
     asock.create_socket()
-    asock.connect(address)
+    asock.connect_retry(address, verbose)
     asyncore.loop(map=connections)
 
 epilog = """
@@ -520,6 +545,8 @@ process exits.
 """
 
 def main(libpath):
+    GDB = 'gdb'
+
     if len(sys.argv) > 2 and sys.argv[1] in ('-t', '--test'):
         sys.exit(attach_loop(sys.argv[2:], libpath))
 
@@ -528,10 +555,18 @@ def main(libpath):
     parser.add_argument('-v', '--verbose', action='store_true',
             help='print gdb/mi output')
     parser.add_argument('-p', '--pid', type=int,
-            help='use gdb to attach to the Python process _not_ instrumented'
-            ' with set_trace_remote() and whose pid is PID')
-    parser.add_argument('-g', '--gdb', default='gdb',
-            help='use GDB to invoke gdb, the default is \'%(default)s\'')
+            help='attach to the Python process whose pid is PID;'
+            ' use gdb to inject the handling of a fake signal when the'
+            ' \'--kill\' optional argument is not used')
+    parser.add_argument('-g', '--gdb',
+            nargs='?', default=None, const=GDB,
+            help='use GDB to invoke gdb, the default is \'%(const)s\'')
+    parser.add_argument('-k', '--kill', type=int,
+            nargs='?', default=None, const=signal.SIGUSR1, metavar='SIGNUM',
+            help='send the SIGNUM signal to process PID '
+            'that has registered a handler for this signal with the '
+            'pdbhandler.register() function and attach to the process;'
+            ' SIGNUM default value is \'%(const)s\'')
     parser.add_argument('host', nargs='?', default=DFLT_ADDRESS[0],
             help='default: %(default)s')
     parser.add_argument('port', nargs='?', default=DFLT_ADDRESS[1], type=int,
@@ -540,10 +575,22 @@ def main(libpath):
 
     address = (args.host, args.port)
     if args.pid is not None:
-        error = spawn_gdb(args.pid, None, libpath, address, args.gdb,
-                                                            args.verbose)
-        if error:
-            print(error)
+        if args.kill is not None:
+            if sys.platform.startswith("win"):
+                parser.error("the '--kill' option"
+                             " is not supported on Windows.")
+            if args.gdb is not None:
+                parser.error("the '--kill' and '--gdb' options conflict.")
+            if args.kill <= 0 or args.kill >= signal.NSIG:
+                parser.error('signal number out of range.')
+            os.kill(args.pid, args.kill)
+            attach(address)
+        else:
+            args.gdb = GDB if args.gdb is None else args.gdb
+            error = spawn_gdb(args.pid, None, libpath,
+                              address, args.gdb, args.verbose)
+            if error:
+                print(error)
     else:
         attach(address)
 

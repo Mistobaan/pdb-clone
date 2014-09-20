@@ -11,7 +11,6 @@ import textwrap
 import importlib
 from pdb_clone import pdb
 from pdb_clone import attach as pdb_attach
-from test.script_helper import assert_python_ok
 try:
     import threading
 except ImportError:
@@ -1536,35 +1535,40 @@ class PdbTestCase(unittest.TestCase):
 class RemoteDebugging(unittest.TestCase):
     """Remote debugging support."""
 
-    def run_pdb_remotely(self, source, commands,
-                                            address=pdb_attach.DFLT_ADDRESS):
+    def setUp(self):
+        self.address = pdb_attach.DFLT_ADDRESS
+
+    def proc_error(self, stderr):
+        if stderr or self.proc.returncode:
+            raise AssertionError("Process return code is %d, "
+                    "stderr follows:\n%s" %
+                    (self.proc.returncode, stderr.decode('ascii', 'ignore')))
+
+    def attach(self, commands, attach_stdout):
+        try:
+            pdb_attach.attach(self.address, io.StringIO('\n'.join(commands)),
+                              attach_stdout, verbose=False)
+        except (ConnectionRefusedError, SystemExit):
+            self.proc.terminate()
+            stdout, stderr = self.proc.communicate()
+            if not self.proc_error(stderr):
+                raise
+
+    def run_pdb_remotely(self, source, commands):
         """Run 'source' in a spawned process."""
+        cmd_line = [sys.executable, '-c', source]
+        self.proc = subprocess.Popen(cmd_line, stdout=subprocess.PIPE,
+                                     stderr=subprocess.PIPE)
+        try:
+            attach_stdout = io.StringIO()
+            self.attach(commands, attach_stdout)
+            stdout, stderr = self.proc.communicate()
+        finally:
+            self.proc.stdout.close()
+            self.proc.stderr.close()
+        self.proc_error(stderr)
+        return attach_stdout.getvalue()
 
-        class Process(threading.Thread):
-            def run(self):
-                rc, self.stdout, self.stderr = assert_python_ok("-c", source,
-                                                            __isolated=False)
-
-        stdin = io.StringIO('\n'.join(commands))
-        proc = Process()
-        proc.start()
-        count = 0
-        while True:
-            try:
-                stdout = io.StringIO()
-                pdb_attach.attach(address, stdin, stdout)
-                break
-            except (ConnectionRefusedError, SystemExit):
-                count += 1
-                if count >= 40:
-                    raise
-                time.sleep(0.200)
-        proc.join()
-        self.assertFalse(proc.stdout)
-        self.assertFalse(proc.stderr)
-        return stdout.getvalue()
-
-@unittest.skipIf(threading is None, 'threading module is required')
 class RemoteDebuggingTestCase(RemoteDebugging):
     """Remote debugging test cases."""
 
@@ -1577,7 +1581,7 @@ class RemoteDebuggingTestCase(RemoteDebugging):
             [
                 'help detach',
                 'detach',
-             ]
+            ]
         )
         self.assertIn('Release the process from pdb control.', stdout)
 
@@ -1591,7 +1595,7 @@ class RemoteDebuggingTestCase(RemoteDebugging):
             [
                 'print("a + 2 = %d" % (a + 2))',
                 'detach',
-             ]
+            ]
         )
         self.assertIn('a + 2 = 3', stdout)
 
@@ -1613,7 +1617,7 @@ class RemoteDebuggingTestCase(RemoteDebugging):
                 'step',
                 'print(fin)',
                 'detach',
-             ]
+            ]
         )
         self.assertIn('in foo', stdout)
         self.assertIn('fin', stdout)
@@ -1629,25 +1633,23 @@ class RemoteDebuggingTestCase(RemoteDebugging):
                 'interact',
                 'text',
                 'quit()',
-             ]
+            ]
         )
         self.assertIn(some_text, stdout)
 
     def test_issue_10(self):
         # Check that one can use a non default inet address.
-        address = (b'localhost', 6825)
+        self.address = (b'localhost', 6825)
         stdout = self.run_pdb_remotely("""if 1:
             from pdb_clone import pdb
             pdb.set_trace_remote({})
-            """.format(str(address).strip('()')),
+            """.format(str(self.address).strip('()')),
             [
                 'detach',
-             ],
-             address
+            ]
         )
-        self.assertIn(str(address), stdout)
+        self.assertIn(str(self.address), stdout)
 
-@unittest.skipIf(threading is None, 'threading module is required')
 class PdbTestCaseUsingRemoteDebugging(RemoteDebugging):
     """Test cases using remote debugging."""
 
