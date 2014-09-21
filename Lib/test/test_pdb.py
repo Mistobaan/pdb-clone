@@ -9,6 +9,7 @@ import unittest
 import subprocess
 import textwrap
 import importlib
+from test.support import strip_python_stderr
 from pdb_clone import pdb
 from pdb_clone import attach as pdb_attach
 try:
@@ -1539,6 +1540,7 @@ class RemoteDebugging(unittest.TestCase):
         self.address = pdb_attach.DFLT_ADDRESS
 
     def proc_error(self, stderr):
+        stderr = strip_python_stderr(stderr)
         if stderr or self.proc.returncode:
             raise AssertionError("Process return code is %d, "
                     "stderr follows:\n%s" %

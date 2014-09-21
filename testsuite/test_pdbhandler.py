@@ -4,6 +4,7 @@ import io
 import signal
 import unittest
 import subprocess
+from test.support import strip_python_stderr
 from pdb_clone import attach as pdb_attach
 
 class RemoteDebugging(unittest.TestCase):
@@ -14,6 +15,7 @@ class RemoteDebugging(unittest.TestCase):
         self.signum = signal.SIGUSR1
 
     def proc_error(self, stderr):
+        stderr = strip_python_stderr(stderr)
         if stderr or self.proc.returncode:
             raise AssertionError("Process return code is %d, "
                     "stderr follows:\n%s" %
