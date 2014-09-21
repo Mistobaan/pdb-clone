@@ -2,7 +2,7 @@
 
   * Improve significantly pdb performance. With breakpoints, pdb-clone runs just above the speed of the interpreter while pdb runs at 10 to 100 times the speed of the interpreter, see `Performances <http://code.google.com/p/pdb-clone/wiki/Performances>`_.
 
-  * Instrument the code with a ``set_trace_remote()`` hard-coded breakpoint and run the ``pdb-attach`` script from another terminal to start a remote debugging session. Or, when the code has not been instrumented, run ``pdb-attach`` with the ``--pid`` option to start the remote debugging session at any time and attach to the process main thread. This feature is implemented in the py3 and py2.7 versions of pdb-clone, see `RemoteDebugging <http://code.google.com/p/pdb-clone/wiki/RemoteDebugging>`_.
+  * Instrument the code with a ``set_trace_remote()`` hard-coded breakpoint and run the ``pdb-attach`` script from another terminal to start a remote debugging session. Or run ``pdb-attach`` with the ``--pid`` option to start the remote debugging session at any time and attach to the process main thread. This feature is implemented in the py3 and py2.7 versions of pdb-clone, see `RemoteDebugging <http://code.google.com/p/pdb-clone/wiki/RemoteDebugging>`_.
 
   * Fix pdb long standing bugs entered in the python issue tracker, see the `News <http://code.google.com/p/pdb-clone/wiki/News>`_.
 
