@@ -10,7 +10,7 @@ import subprocess
 import textwrap
 import importlib
 from test.support import strip_python_stderr
-from pdb_clone import pdb
+from pdb_clone import pdb, DFLT_ADDRESS
 from pdb_clone import attach as pdb_attach
 try:
     import threading
@@ -953,14 +953,9 @@ def test_thread_command():
     ...     t2 = threading.Thread(name='Thread_2', target=deadlock,
     ...                                 args=(locks[1], locks[0], state2))
     ...     t2.start()
-    ...     tlist = [t1, t2]
     ...
     ...     from pdb_clone import pdb; pdb.Pdb(nosigint=True).set_trace()
-    ...     while tlist:
-    ...         for (i, t) in enumerate(tlist):
-    ...             t.join(.020)
-    ...             if not t.is_alive():
-    ...                 del tlist[i]
+    ...     t1.join(); t2.join()
 
     >>> with PdbTestInput([  # doctest: +ELLIPSIS
     ...                    'time.sleep(.100)',
@@ -975,13 +970,13 @@ def test_thread_command():
     ...                    'thread',
     ...                    'continue']):
     ...     test_function()
-    > <doctest test.test_pdb.test_thread_command[2]>(13)test_function()
-    -> while tlist:
+    > <doctest test.test_pdb.test_thread_command[2]>(12)test_function()
+    -> t1.join(); t2.join()
     (Pdb) time.sleep(.100)
     (Pdb) thread
        Nb  Name               Identifier       Stack entry
-    +*   1 MainThread          ... <doctest test.test_pdb.test_thread_command[2]>(13)test_function()
-                                               -> while tlist:
+    +*   1 MainThread          ... <doctest test.test_pdb.test_thread_command[2]>(12)test_function()
+                                               -> t1.join(); t2.join()
          2 Thread_1            ... <doctest test.test_pdb.test_thread_command[1]>(6)deadlock()
                                                -> if lock2.acquire(timeout=.020):
          3 Thread_2            ... <doctest test.test_pdb.test_thread_command[1]>(6)deadlock()
@@ -991,8 +986,8 @@ def test_thread_command():
     -> if lock2.acquire(timeout=.020):
     (Pdb) thread
        Nb  Name               Identifier       Stack entry
-    +    1 MainThread          ... <doctest test.test_pdb.test_thread_command[2]>(13)test_function()
-                                               -> while tlist:
+    +    1 MainThread          ... <doctest test.test_pdb.test_thread_command[2]>(12)test_function()
+                                               -> t1.join(); t2.join()
      *   2 Thread_1            ... <doctest test.test_pdb.test_thread_command[1]>(6)deadlock()
                                                -> if lock2.acquire(timeout=.020):
          3 Thread_2            ... <doctest test.test_pdb.test_thread_command[1]>(6)deadlock()
@@ -1000,14 +995,14 @@ def test_thread_command():
     (Pdb) state.stop()
     (Pdb) time.sleep(.100)
     (Pdb) thread 1
-    > <doctest test.test_pdb.test_thread_command[2]>(13)test_function()
-    -> while tlist:
+    > <doctest test.test_pdb.test_thread_command[2]>(12)test_function()
+    -> t1.join(); t2.join()
     (Pdb) state2.stop()
     (Pdb) time.sleep(.100)
     (Pdb) thread
        Nb  Name               Identifier       Stack entry
-    +*   1 MainThread          ... <doctest test.test_pdb.test_thread_command[2]>(13)test_function()
-                                               -> while tlist:
+    +*   1 MainThread          ... <doctest test.test_pdb.test_thread_command[2]>(12)test_function()
+                                               -> t1.join(); t2.join()
     (Pdb) continue
     """
 
@@ -1537,7 +1532,7 @@ class RemoteDebugging(unittest.TestCase):
     """Remote debugging support."""
 
     def setUp(self):
-        self.address = pdb_attach.DFLT_ADDRESS
+        self.address = DFLT_ADDRESS
 
     def proc_error(self, stderr):
         stderr = strip_python_stderr(stderr)
