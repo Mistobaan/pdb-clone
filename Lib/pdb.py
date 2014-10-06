@@ -424,7 +424,10 @@ class Pdb(bdb.Bdb, cmd.Cmd):
                                   # defining a list
 
     def __del__(self):
-        self.close()
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def close(self):
         if self.closed:
@@ -621,7 +624,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
             self._cmdloop()
         finally:
             self.pdb_toplevel_frame = None
-        self.forget()
+            self.forget()
 
     def displayhook(self, obj):
         """Custom displayhook for the exec in default(), which prevents
@@ -632,23 +635,10 @@ class Pdb(bdb.Bdb, cmd.Cmd):
             self.message(repr(obj))
 
     def redirect(self, func, *args, **kwds):
+        # When Pdb has been instantiated in a subinterpreter, the redirection
+        # must be done with the sys module of the main interpreter, not the
+        # one of the subinterpreter.
         import sys as _sys
-        do_delsys = False
-        if sys is not _sys:
-            # When Pdb has been instantiated in a subinterpreter, the
-            # redirection must be done in the main interpreter, not in the
-            # subinterpreter.
-            globals = self.curframe.f_globals
-            frame_sys = globals.get('sys')
-            if not frame_sys:
-                globals['sys'] = _sys
-                do_delsys = True
-            else:
-                _sys = frame_sys
-            # The 'code' module is used by the 'interact' command and imported
-            # in the subinterpreter. Redirect the 'code' standard streams to
-            # those of the main interpreter.
-            code.sys = _sys
 
         save_stdout = _sys.stdout
         save_stdin = _sys.stdin
@@ -664,8 +654,6 @@ class Pdb(bdb.Bdb, cmd.Cmd):
             _sys.stderr = save_stdout
             _sys.stdin = save_stdin
             _sys.displayhook = save_displayhook
-            if do_delsys:
-                del globals['sys']
 
     def default(self, line):
         if line[:1] == '!': line = line[1:]
@@ -1631,6 +1619,9 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         ns = self.curframe.f_globals.copy()
         ns.update(self.get_locals(self.curframe))
         if isinstance(self.stdin, RemoteSocket):
+            # Main interpreter redirection of the code module.
+            import sys as _sys
+            code.sys = _sys
             self.redirect(code.interact, local=ns, readfunc=readfunc)
         else:
             code.interact("*interactive*", local=ns)
@@ -1873,7 +1864,7 @@ if __doc__ is not None:
         'enable', 'ignore', 'condition', 'commands', 'step', 'next', 'until',
         'jump', 'return', 'retval', 'run', 'continue', 'list', 'longlist',
         'args', 'p', 'pp', 'whatis', 'source', 'display', 'undisplay',
-        'interact', 'alias', 'unalias', 'debug', 'detach', 'quit',
+        'thread', 'interact', 'alias', 'unalias', 'debug', 'detach', 'quit',
     ]
 
     for _command in _help_order:

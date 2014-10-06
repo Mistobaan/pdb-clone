@@ -23,10 +23,9 @@ import asyncore
 import asynchat
 from itertools import takewhile
 from collections import deque
-from subprocess import Popen, STDOUT
-from pdb_clone import pdb
+from subprocess import Popen, STDOUT, DEVNULL
+from pdb_clone import pdb, DFLT_ADDRESS
 
-DFLT_ADDRESS = ('127.0.0.1', 7935)
 prompts = ('(Pdb) ', '(com) ', '((Pdb)) ', '>>> ', '... ')
 line_prmpts = tuple('\n%s' % p for p in prompts)
 
@@ -109,9 +108,14 @@ class AttachSocket(asynchat.async_chat, cmd.Cmd):
                         print('.', end='', flush=True)
                 count += 1
                 if count >= 20:
+                    if verbose:
+                        print('failed', flush=True)
                     self.close()
                     raise
+                yield count
                 time.sleep(0.200)
+        if verbose and count > skip_connect:
+            print('ok', flush=True)
 
     def get_header(self, line):
         if line.startswith('PROCESS_PID:'):
@@ -202,7 +206,7 @@ class Result:
     def __str__(self):
         lines = [
             'Results:',
-            '  successful py-pdb commands: %d' % self.attach_cnt]
+            '  successful attach: %d' % self.attach_cnt]
         if self.retries:
             lines.append('  retries:')
             for rtype in sorted(self.retries):
@@ -255,11 +259,13 @@ class GdbSocket(asynchat.async_chat):
 
     ST_INIT, ST_PDB, ST_EXIT, ST_TERMINATED = tuple(range(4))
 
-    def __init__(self, ctx, address, proc, sock, verbose, connections):
+    def __init__(self, ctx, address, proc, proc_iut, sock,
+                 verbose, connections):
         super().__init__(sock, connections)
         self.ctx = ctx
         self.address = address
         self.proc = proc
+        self.proc_iut = proc_iut
         self.verbose = verbose
         self.connections = connections
         self.error = None
@@ -318,39 +324,13 @@ class GdbSocket(asynchat.async_chat):
         self.mi_command('-gdb-exit')
 
     def attach(self):
-        skip_connect = 5
         if self.ctx:
             dev_null = io.StringIO()
             asock = AttachSocketWithDetach(self.connections, stdout=dev_null)
         else:
             asock = AttachSocket(self.connections)
         asock.create_socket()
-        attempts = 0
-        while not asock.connected:
-            try:
-                asock.connect(self.address)
-            except ConnectionRefusedError:
-                # Skip printing the first connection failures.
-                if attempts >= skip_connect:
-                    if attempts == skip_connect:
-                        print('Connecting to remote pdb' +
-                                skip_connect * '.', end='', flush=True)
-                    else:
-                        print('.', end='', flush=True)
-                attempts += 1
-                if attempts > 40:
-                    asock.close()
-                    print('~', flush=True)
-                    if self.ctx:
-                        self.ctx.result.add('Failed to connect to remote pdb')
-                    else:
-                        print('\nFailed to connect to the remote pdb.')
-                    return
-                time.sleep(0.200)
-        if self.ctx:
-            self.ctx.result.attach_cnt += 1
-        if attempts > skip_connect:
-            print('+', flush=True)
+        connect_process(asock, self.ctx, self.proc_iut, address=self.address)
 
     def collect_incoming_data(self, data):
         self.ibuff.write(data.decode())
@@ -488,8 +468,8 @@ def augmented_environ(libpath):
         environ['PYTHONPATH'] = os.pathsep.join(pythonpath).lstrip(os.pathsep)
     return environ
 
-def spawn_gdb(pid, ctx, libpath, address=DFLT_ADDRESS, gdb='gdb',
-                                                        verbose=False):
+def spawn_gdb(pid, libpath, address=DFLT_ADDRESS, gdb='gdb', verbose=False,
+              ctx=None, proc_iut=None):
     """Spawn gdb and attach to a process."""
 
     parent, child = socket.socketpair()
@@ -499,7 +479,8 @@ def spawn_gdb(pid, ctx, libpath, address=DFLT_ADDRESS, gdb='gdb',
     child.close()
 
     connections = {}
-    gdb = GdbSocket(ctx, address, proc, parent, verbose, connections)
+    gdb = GdbSocket(ctx, address, proc, proc_iut, parent, verbose,
+                    connections)
     gdb.mi_command('-target-attach %d' % pid)
     gdb.cli_command('python import pdb_clone.bootstrappdb_gdb')
     asyncore.loop(map=connections)
@@ -507,16 +488,43 @@ def spawn_gdb(pid, ctx, libpath, address=DFLT_ADDRESS, gdb='gdb',
     return gdb.error
 
 def attach_loop(argv, libpath):
-    """Spawn the process, then repeatedly spawn gdb and run py-pdb."""
-    args = [sys.executable]
-    args.extend(argv)
-    proc = Popen(args, env=augmented_environ(libpath))
+    """Spawn the process, then repeatedly attach to the process."""
 
+    # Check if the pdbhandler module is built into python.
+    p = Popen((sys.executable, '-X', 'pdbhandler', '-c',
+                'import pdbhandler; pdbhandler.get_handler().host'),
+               stdout=DEVNULL, stderr=DEVNULL)
+    p.wait()
+    use_xoption = True if p.returncode == 0 else False
+
+    # Spawn the process.
+    args = [sys.executable]
+    if use_xoption:
+        # Use SIGUSR2 as faulthandler is set on python test suite with
+        # SIGUSR1.
+        args.extend(['-X', 'pdbhandler=localhost 7935 %d' % signal.SIGUSR2])
+        args.extend(argv)
+        proc = Popen(args)
+    else:
+        args.extend(argv)
+        proc = Popen(args, env=augmented_environ(libpath))
+
+    # Repeatedly attach to the process using the '-X' python option or gdb.
     ctx = Context()
     error = None
+    time.sleep(.5 + random.random())
     while not error and proc.poll() is None:
+        if use_xoption:
+            os.kill(proc.pid, signal.SIGUSR2)
+            connections = {}
+            dev_null = io.StringIO()
+            asock = AttachSocketWithDetach(connections, stdout=dev_null)
+            asock.create_socket()
+            connect_process(asock, ctx, proc)
+            asyncore.loop(map=connections)
+        else:
+            error = spawn_gdb(proc.pid, libpath, ctx=ctx, proc_iut=proc)
         time.sleep(random.random())
-        error = spawn_gdb(proc.pid, ctx, libpath)
 
     if error and gdb_terminated(error):
         error = None
@@ -530,18 +538,36 @@ def attach_loop(argv, libpath):
         print(result)
     return error
 
+def connect_process(asock, ctx, proc, address=DFLT_ADDRESS):
+    try:
+        for count in asock.connect_retry(address, True):
+            # Stop attempting to connect when an os.kill() statement has
+            # terminated the process after atexit has unregistered the signal
+            # handler.
+            if proc and proc.poll() is not None:
+                asock.close()
+                return
+    except ConnectionRefusedError:
+        if ctx:
+            ctx.result.add('Failed to connect to remote pdb')
+        else:
+            print('\nFailed to connect to the remote pdb.')
+    else:
+        if ctx:
+            ctx.result.attach_cnt += 1
+
 def attach(address=DFLT_ADDRESS, stdin=None, stdout=None, verbose=True):
     connections = {}
     asock = AttachSocket(connections, stdin=stdin, stdout=stdout)
     asock.create_socket()
-    asock.connect_retry(address, verbose)
+    for count in asock.connect_retry(address, verbose):
+        pass
     asyncore.loop(map=connections)
 
 epilog = """
-When the first argument is '-t' or '--test', repeatedly spawn gdb to attach
-(followed by pdb detach) to a process that is spawned by 'pdb-attach' as
-python started with the remainder of the command line arguments and until this
-process exits.
+When the first argument is '-t' or '--test', spawn a process as python started
+with the remainder of the command line arguments and repeatedly attach
+(followed by detach) to this process until the process exits.
 """
 
 def main(libpath):
@@ -587,8 +613,8 @@ def main(libpath):
             attach(address)
         else:
             args.gdb = GDB if args.gdb is None else args.gdb
-            error = spawn_gdb(args.pid, None, libpath,
-                              address, args.gdb, args.verbose)
+            error = spawn_gdb(args.pid, libpath, address,
+                              args.gdb, args.verbose)
             if error:
                 print(error)
     else:

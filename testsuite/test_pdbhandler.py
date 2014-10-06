@@ -5,13 +5,14 @@ import signal
 import unittest
 import subprocess
 from test.support import strip_python_stderr
+from pdb_clone import DFLT_ADDRESS
 from pdb_clone import attach as pdb_attach
 
 class RemoteDebugging(unittest.TestCase):
     """Remote debugging support."""
 
     def setUp(self):
-        self.address = pdb_attach.DFLT_ADDRESS
+        self.address = DFLT_ADDRESS
         self.signum = signal.SIGUSR1
 
     def proc_error(self, stderr):
@@ -22,8 +23,8 @@ class RemoteDebugging(unittest.TestCase):
                     (self.proc.returncode, stderr.decode('ascii', 'ignore')))
 
     def attach(self, commands, attach_stdout):
-        # Wait for pdbhandler to be imported and the signal handler
-        # registered.
+        # Wait for pdbhandler to be imported, the signal handler
+        # registered and the main loop started.
         self.proc.stdout.readline()
         os.kill(self.proc.pid, self.signum)
         try:
@@ -39,9 +40,9 @@ class RemoteDebugging(unittest.TestCase):
         """Run 'source' in a spawned process."""
         header = ("""if 1:
             from pdb_clone import pdbhandler
-            pdbhandler.register(%d, '%s', %d)
-            print('Registered.', flush=True)""" %
-                (self.signum, self.address[0], self.address[1]))
+            pdbhandler.register('%s', %d, %d)
+            started = False""" %
+                (self.address[0], self.address[1], self.signum))
         cmd_line = [sys.executable, '-c', header + '\n' + source]
         self.proc = subprocess.Popen(cmd_line, stdout=subprocess.PIPE,
                                      stderr=subprocess.PIPE)
@@ -66,6 +67,9 @@ class PdbHandlerTestCase(RemoteDebugging):
             import time
             i = 1
             while i:
+                if not started:
+                    print('started.', flush=True)
+                    started = True
                 time.sleep(.020)
             """,
             [
@@ -73,7 +77,7 @@ class PdbHandlerTestCase(RemoteDebugging):
                 'detach',
             ]
         )
-        self.assertIn(str(pdb_attach.DFLT_ADDRESS), stdout)
+        self.assertIn(str(DFLT_ADDRESS), stdout)
 
     def test_attach_twice(self):
         # Attach twice to the same process and check the release of the
@@ -83,6 +87,9 @@ class PdbHandlerTestCase(RemoteDebugging):
             i = 1
             second_session = 0
             while i:
+                if not started:
+                    print('started.', flush=True)
+                    started = True
                 i += 1
                 if second_session:
                     second_session = 0
@@ -98,7 +105,7 @@ class PdbHandlerTestCase(RemoteDebugging):
                 'detach',
             ]
         )
-        self.assertIn(str(pdb_attach.DFLT_ADDRESS), stdout)
+        self.assertIn(str(DFLT_ADDRESS), stdout)
 
     def test_get_handler(self):
         # Check pdbhandler.get_handler.
@@ -106,6 +113,9 @@ class PdbHandlerTestCase(RemoteDebugging):
             import time
             i = 1
             while i:
+                if not started:
+                    print('started.', flush=True)
+                    started = True
                 time.sleep(.020)
             """,
             [
@@ -115,7 +125,8 @@ class PdbHandlerTestCase(RemoteDebugging):
                 'detach',
             ]
         )
-        self.assertIn('Handler(signum=%d' % signal.SIGUSR1, stdout)
+        self.assertIn("Handler(host=b'127.0.0.1', port=7935, signum=%d)" %
+                      signal.SIGUSR1, stdout)
 
     def test_unregister(self):
         # Check pdbhandler.unregister.
@@ -123,6 +134,9 @@ class PdbHandlerTestCase(RemoteDebugging):
             import time
             i = 1
             while i:
+                if not started:
+                    print('started.', flush=True)
+                    started = True
                 time.sleep(.020)
             """,
             [
@@ -143,6 +157,9 @@ class PdbHandlerTestCase(RemoteDebugging):
             import time
             i = 1
             while i:
+                if not started:
+                    print('started.', flush=True)
+                    started = True
                 time.sleep(.020)
             """,
             [
@@ -152,11 +169,8 @@ class PdbHandlerTestCase(RemoteDebugging):
                 'detach',
             ]
         )
-        self.assertIn("Handler(signum=%d, host=b'localhost', port=6825)" %
+        self.assertIn("Handler(host=b'localhost', port=6825, signum=%d)" %
             signal.SIGUSR2, stdout)
 
-def test_main():
-    support.run_unittest(PdbHandlerTestCase)
-
 if __name__ == '__main__':
-    test_main()
+    unittest.main()
