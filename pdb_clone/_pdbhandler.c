@@ -37,7 +37,7 @@ static PyThreadState *pdbhandler_tstate = NULL;
 /* A dummy object that ends the pdb's subinterpreter when deallocated. */
 typedef struct {
     PyObject_HEAD
-    PyThreadState *tstate;
+    PyThreadState *substate;
 } pdbtracerctxobject;
 
 /* Only one instance of pdbtracerctxobject at any given time.
@@ -89,19 +89,19 @@ threadstate_getframe(PyThreadState *ignored)
 static int
 bootstrappdb(void *args)
 {
-    PyThreadState *tstate;
+    PyThreadState *substate;
     Py_tracefunc tracefunc;
     PyObject *traceobj;
     PyObject *type, *value, *traceback;
-    PyObject *kwds = (PyObject *)args;
     PyThreadState *mainstate = PyThreadState_GET();
     PyObject *rsock = NULL;
     int rc = -1;
 
-    /* When bootstrappdb() is a signal handler, 'kwds' is the address field of
-     * a pdbhandler_signal_t structure. The 'kwds' dictionary is passed as
-     * argument to set_trace_remote(). */
-    if (!PyDict_Check(kwds)) {
+    /* When bootstrappdb() is a signal handler, 'args' is the address field of
+     * a pdbhandler_signal_t structure.
+     * 'kwds', a copy of the 'args' dictionary, is passed as argument to
+     * set_trace_remote(). */
+    if (!PyDict_Check((PyObject *)args)) {
         PyErr_SetString(PyExc_TypeError, "'args' must be a dict");
         return -1;
     }
@@ -117,11 +117,12 @@ bootstrappdb(void *args)
     if (PyType_Ready(&pdbtracerctxtype) < 0)
         return -1;
 
-    if ((tstate=call_set_trace_remote(mainstate, kwds, &rsock)) == NULL)
+    if ((substate=call_set_trace_remote(
+                                mainstate, (PyObject *)args, &rsock)) == NULL)
         return -1;
 
-    tracefunc = tstate->c_tracefunc;
-    traceobj = tstate->c_traceobj;
+    tracefunc = substate->c_tracefunc;
+    traceobj = substate->c_traceobj;
     Py_XINCREF(traceobj);
     if (rsock == NULL)
         goto err;
@@ -139,7 +140,7 @@ bootstrappdb(void *args)
     if (PyObject_SetAttrString(rsock, "_pdbtracerctxobject",
                                       (PyObject *)current_pdbctx) != 0)
         goto err;
-    current_pdbctx->tstate = tstate;
+    current_pdbctx->substate = substate;
 
     /* Swap the trace function between both tread states. */
     PyEval_SetTrace(NULL, NULL);
@@ -152,7 +153,7 @@ bootstrappdb(void *args)
 err:
     Py_XDECREF(traceobj);
     PyErr_Fetch(&type, &value, &traceback);
-    Py_EndInterpreter(tstate);
+    Py_EndInterpreter(substate);
     PyThreadState_Swap(mainstate);
     if (type)
         PyErr_Restore(type, value, traceback);
@@ -166,17 +167,23 @@ int
 bootstrappdb_string(char *arg)
 {
     PyObject *addressdict;
+    char *buf;
     char *p;
-    PyObject *host;
+    PyObject *host = NULL;
     PyObject *port = NULL;
     int rc = -1;
 
     if (arg == NULL)
         return -1;
-    if ((addressdict=PyDict_New()) == NULL)
+    buf = (char *)malloc(strlen(arg) + 1);
+    if (buf == NULL)
         return -1;
+    strcpy(buf, arg);
 
-    if((p=strtok(arg, " ")) != NULL) {
+    if ((addressdict=PyDict_New()) == NULL)
+        goto err;
+
+    if((p=strtok(buf, " ")) != NULL) {
         host = PyString_FromString(p);
         if (host == NULL)
             goto err;
@@ -193,7 +200,8 @@ bootstrappdb_string(char *arg)
     rc = bootstrappdb(addressdict);
 
 err:
-    Py_DECREF(addressdict);
+    free(buf);
+    Py_XDECREF(addressdict);
     Py_XDECREF(host);
     Py_XDECREF(port);
     return rc;
@@ -201,7 +209,7 @@ err:
 
 static PyThreadState *
 call_set_trace_remote(PyThreadState *mainstate,
-                        PyObject *kwds, PyObject **prsock)
+                        PyObject *args, PyObject **prsock)
 {
     PyObject *saved_globals;
     PyObject *saved_locals;
@@ -211,8 +219,7 @@ call_set_trace_remote(PyThreadState *mainstate,
     PyObject *globals = NULL;
     PyObject *locals = NULL;
     PyObject *pdb = NULL;
-    PyObject *func = NULL;
-    PyThreadState *tstate = NULL;
+    PyThreadState *substate = NULL;
 
     builtins_str = PyString_InternFromString("__builtins__");
     if (builtins_str == NULL)
@@ -238,21 +245,29 @@ call_set_trace_remote(PyThreadState *mainstate,
     _PyThreadState_GetFrame = threadstate_getframe;
     pdbhandler_tstate = mainstate;
 
-    if ((tstate=Py_NewInterpreter()) == NULL)
+    PyThreadState_Swap(NULL);
+    if ((substate=Py_NewInterpreter()) == NULL) {
+        PyThreadState_Swap(mainstate);
+        PyErr_SetString(PyExc_RuntimeError,
+                        "pdb subinterpreter creation failed");
         goto swap;
+    }
 
     pdb = PyImport_ImportModule("pdb_clone.pdb");
     if (pdb != NULL ) {
-        func = PyObject_GetAttrString(pdb, "set_trace_remote");
-        if (func != NULL &&
-                PyDict_SetItemString(kwds, "frame",
-                                     (PyObject *)mainstate->frame) == 0) {
-            PyObject *empty_tuple = PyTuple_New(0);
-            *prsock = PyObject_Call(func, empty_tuple, kwds);
-            Py_DECREF(empty_tuple);
+        PyObject *func = PyObject_GetAttrString(pdb, "set_trace_remote");
+        if (func != NULL) {
+            PyObject *kwds = PyDict_Copy((PyObject *)args);
+            if (kwds && PyDict_SetItemString(kwds, "frame",
+                                    (PyObject *)mainstate->frame) == 0) {
+                PyObject *empty_tuple = PyTuple_New(0);
+                *prsock = PyObject_Call(func, empty_tuple, kwds);
+                Py_DECREF(empty_tuple);
+            }
+            Py_XDECREF(kwds);
         }
+        Py_XDECREF(func);
     }
-
 swap:
     mainstate->frame->f_globals = saved_globals;
     mainstate->frame->f_locals = saved_locals;
@@ -264,19 +279,18 @@ fin:
     Py_XDECREF(globals);
     Py_XDECREF(locals);
     Py_XDECREF(pdb);
-    Py_XDECREF(func);
-    return tstate;
+    return substate;
 }
 
 static void
 pdbtracerctx_dealloc(pdbtracerctxobject *self)
 {
-    if (self->tstate != NULL) {
-        PyThreadState *tstate = PyThreadState_GET();
-        PyThreadState_Swap(self->tstate);
-        Py_EndInterpreter(self->tstate);
-        PyThreadState_Swap(tstate);
-        self->tstate = NULL;
+    if (self->substate != NULL) {
+        PyThreadState *substate = PyThreadState_GET();
+        PyThreadState_Swap(self->substate);
+        Py_EndInterpreter(self->substate);
+        PyThreadState_Swap(substate);
+        self->substate = NULL;
     }
     Py_TYPE(self)->tp_free((PyObject*)self);
     current_pdbctx = NULL;
@@ -310,43 +324,34 @@ check_signum(int *psignum)
 
 static int atexit_register(void)
 {
+    PyObject *pdbhandler;
+    PyObject *unregister;
     PyObject *atexit;
-    PyObject *regist;
-    PyObject *pdbhandler = NULL;
-    PyObject *unregister = NULL;
-    PyObject *arg = NULL;
-    PyObject *rv = NULL;
-    int rc = -1;
+    PyObject *rv;
+    int rc;
     static int registered = 0;
 
     if (registered)
         return 0;
     registered = 1;
 
-    atexit = PyImport_ImportModule("atexit");
-    if (atexit == NULL)
-        return -1;
-    regist = PyObject_GetAttrString(atexit, "register");
-    if (regist == NULL)
-        goto err;
     pdbhandler = PyImport_ImportModule("pdb_clone.pdbhandler");
     if (pdbhandler == NULL)
-        goto err;
+        return -1;
     unregister = PyObject_GetAttrString(pdbhandler, "unregister");
+    Py_DECREF(pdbhandler);
     if (unregister == NULL)
-        goto err;
-    arg = Py_BuildValue("(O)", unregister);
-    if (arg == NULL)
-        goto err;
-    if((rv=PyObject_Call(regist, arg, NULL)) != NULL)
-        rc = 0;
+        return -1;
+    atexit = PyImport_ImportModule("atexit");
+    if (atexit == NULL) {
+        Py_DECREF(unregister);
+        return -1;
+    }
+    rv = PyObject_CallMethod(atexit, "register", "O", unregister);
+    rc = (rv != NULL ? 0 : -1);
 
-err:
     Py_DECREF(atexit);
-    Py_XDECREF(regist);
-    Py_XDECREF(pdbhandler);
-    Py_XDECREF(unregister);
-    Py_XDECREF(arg);
+    Py_DECREF(unregister);
     Py_XDECREF(rv);
     return rc;
 }
@@ -366,7 +371,7 @@ _unregister(pdbhandler_signal_t *psignal)
 }
 
 static int
-_register(pdbhandler_signal_t *psignal, int signum, PyObject *host, int port)
+_register(pdbhandler_signal_t *psignal, PyObject *host, int port, int signum)
 {
     PyObject *address;
     PyObject *port_obj = NULL;
@@ -428,15 +433,15 @@ err:
 static PyObject*
 _pdbhandler_register(PyObject *self, PyObject *args, PyObject *kwargs)
 {
-    static char *kwlist[] = {"signum", "host", "port", NULL};
+    static char *kwlist[] = {"host", "port", "signum", NULL};
     int signum = 0;
     PyObject *host = NULL;
     int port = 0;
 
     if (!PyArg_ParseTupleAndKeywords(args, kwargs,
-            "|iO!i:register", kwlist, &signum, &PyString_Type, &host, &port))
+            "|O!ii:register", kwlist, &PyString_Type, &host, &port, &signum))
         return NULL;
-    if (_register(&pdbhandler_signal, signum, host, port) == -1)
+    if (_register(&pdbhandler_signal, host, port, signum) == -1)
         return NULL;
     Py_RETURN_NONE;
 }
@@ -465,8 +470,8 @@ _pdbhandler_registered(PyObject *self)
         port_0 = 1;
         port = PyInt_FromLong(0);
     }
-    rv = Py_BuildValue("(iOO)", psignal->signum,
-                                host == NULL ? Py_None: host, port);
+    rv = Py_BuildValue("(OOi)", host == NULL ? Py_None: host, port,
+                       psignal->signum);
     if (port_0)
         Py_DECREF(port);
     return rv;
@@ -490,10 +495,6 @@ PyDoc_STRVAR(pdbhandler_doc, "The _pdbhandler module.");
 PyMODINIT_FUNC
 init_pdbhandler(void)
 {
-    pdbtracerctxtype.tp_new = PyType_GenericNew;
-    if (PyType_Ready(&pdbtracerctxtype) < 0)
-        return;
-
     Py_InitModule3("_pdbhandler", _pdbhandler_methods, pdbhandler_doc);
 }
 
