@@ -3,3 +3,4 @@ include README
 include README.rst
 include LICENSE
 include MANIFEST.in
+include python_patches/pdbhandler-py3.4.patch
