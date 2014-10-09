@@ -641,6 +641,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         import sys as _sys
 
         save_stdout = _sys.stdout
+        save_stderr = _sys.stderr
         save_stdin = _sys.stdin
         save_displayhook = _sys.displayhook
         _sys.stdin = self.stdin
@@ -651,7 +652,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
             func(*args, **kwds)
         finally:
             _sys.stdout = save_stdout
-            _sys.stderr = save_stdout
+            _sys.stderr = save_stderr
             _sys.stdin = save_stdin
             _sys.displayhook = save_displayhook
 
