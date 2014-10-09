@@ -795,6 +795,29 @@ def test_pdb_issue_20766():
     self._previous_sigint_handler does not refer to the previous Pdb instance.
     """
 
+def test_pdb_issue_11():
+    """Pdb does not change sys.stderr.
+
+    >>> def test_function():
+    ...     from pdb_clone import pdb; pdb.Pdb(nosigint=True).set_trace()
+    ...     print sys.stderr == sys.__stderr__
+
+    >>> with PdbTestInput(['sys',
+    ...                    'next',
+    ...                    'continue']):
+    ...     test_function()
+    > <doctest test.test_pdb.test_pdb_issue_11[0]>(3)test_function()
+    -> print sys.stderr == sys.__stderr__
+    (Pdb) sys
+    <module 'sys' (built-in)>
+    (Pdb) next
+    True
+    --Return--
+    > <doctest test.test_pdb.test_pdb_issue_11[0]>(3)test_function()->None
+    -> print sys.stderr == sys.__stderr__
+    (Pdb) continue
+    """
+
 def normalize(result, filename='', strip_bp_lnum=False):
     """Normalize a test result."""
     lines = []

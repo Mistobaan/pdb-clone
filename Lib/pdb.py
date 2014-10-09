@@ -627,6 +627,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         _sys = __import__('sys', level=0)
 
         save_stdout = _sys.stdout
+        save_stderr = _sys.stderr
         save_stdin = _sys.stdin
         save_displayhook = _sys.displayhook
         _sys.stdin = self.stdin
@@ -640,7 +641,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
                 exec args[0] in args[1], args[2]
         finally:
             _sys.stdout = save_stdout
-            _sys.stderr = save_stdout
+            _sys.stderr = save_stderr
             _sys.stdin = save_stdin
             _sys.displayhook = save_displayhook
 
