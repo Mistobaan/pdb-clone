@@ -80,6 +80,7 @@ bootstrappdb(void *args)
 {
     PyThreadState *substate;
     Py_tracefunc tracefunc;
+    PyObject *tracemalloc;
     PyObject *traceobj;
     PyObject *type, *value, *traceback;
     PyThreadState *mainstate = PyThreadState_GET();
@@ -98,6 +99,24 @@ bootstrappdb(void *args)
 
     if (!Py_IsInitialized())
         return 0;
+
+    /* The tracemalloc module calls the PyGILState_ API during the
+     * subinterpreter creation and instantiation of pdb. */
+    tracemalloc = PyImport_ImportModule("tracemalloc");
+    if (tracemalloc != NULL ) {
+        int istrue;
+        PyObject *rv = PyObject_CallMethod(tracemalloc, "is_tracing", NULL);
+        Py_DECREF(tracemalloc);
+        if (rv == NULL)
+            return -1;
+        istrue = (rv == Py_True) ? 1 : 0;
+        Py_DECREF(rv);
+        if (istrue)
+            Py_FatalError("cannot run pdbhandler while"
+                          " tracemalloc is tracing");
+    }
+    else
+        PyErr_Clear();
 
     /* See python issue 21033. */
     if (mainstate->tracing || current_pdbctx)
