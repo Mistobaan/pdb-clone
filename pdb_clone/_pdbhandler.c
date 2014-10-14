@@ -109,6 +109,12 @@ bootstrappdb(void *args)
     if (!Py_IsInitialized())
         return 0;
 
+#ifdef WITH_THREAD
+    /* Do not instantiate pdb when stopped in a subinterpreter. */
+    if (!mainstate || mainstate != PyGILState_GetThisThreadState())
+        return 0;
+#endif
+
     /* See python issue 21033. */
     if (mainstate->tracing || current_pdbctx)
         return 0;
