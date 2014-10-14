@@ -100,6 +100,12 @@ bootstrappdb(void *args)
     if (!Py_IsInitialized())
         return 0;
 
+#ifdef WITH_THREAD
+    /* Do not instantiate pdb when stopped in a subinterpreter. */
+    if (!PyGILState_Check())
+        return 0;
+#endif
+
     /* The tracemalloc module calls the PyGILState_ API during the
      * subinterpreter creation and instantiation of pdb. */
     tracemalloc = PyImport_ImportModule("tracemalloc");
