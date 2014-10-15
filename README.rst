@@ -2,7 +2,7 @@
 
   * Improve significantly pdb performance. With breakpoints, pdb-clone runs just above the speed of the interpreter while pdb runs at 10 to 100 times the speed of the interpreter, see `Performances <http://code.google.com/p/pdb-clone/wiki/Performances>`_.
 
-  * Instrument the code with a ``set_trace_remote()`` hard-coded breakpoint and run the ``pdb-attach`` script from another terminal to start a remote debugging session. Or run ``pdb-attach`` with the ``--pid`` option to start the remote debugging session at any time and attach to the process main thread. This feature is implemented in the py3 and py2.7 versions of pdb-clone, see `RemoteDebugging <http://code.google.com/p/pdb-clone/wiki/RemoteDebugging>`_.
+  * Extend pdb with remote debugging. A remote debugging session may be started when the program stops at a ``pdb.set_trace_remote()`` hard-coded breakpoint, or at any time and multiple times by attaching to the process main thread. This feature is implemented in the py3 and py2.7 versions of pdb-clone, see `RemoteDebugging <http://code.google.com/p/pdb-clone/wiki/RemoteDebugging>`_
 
   * Fix pdb long standing bugs entered in the python issue tracker, see the `News <http://code.google.com/p/pdb-clone/wiki/News>`_.
 
@@ -24,9 +24,9 @@ Report bugs to the `issue tracker <http://code.google.com/p/pdb-clone/issues/lis
 
 **Install**
 
-For example, to install the Python 3 version of pdb-clone version 1.8 with pip::
+For example, to install the Python 3 version of pdb-clone version 1.9 with pip::
 
-    sudo pip install pdb-clone==1.8.py3 --egg
+    sudo pip install pdb-clone==1.9.py3 --egg
 
 This requires *pip 1.2* or above. *pip 1.2* fixes `pip issue 3 <https://github.com/pypa/pip/issues/3>`_ by adding the ``--egg`` option so as not to use ``single-version-externally-managed``. Unfortunately ``single-version-externally-managed`` seems to break all the Python packages based on the standard library ``distutils``.
 
