@@ -1,7 +1,6 @@
 # A test suite for pdb; not very comprehensive at the moment.
 
 import sys
-import os
 import StringIO
 import time
 import imp
@@ -21,11 +20,6 @@ except ImportError:
 from test import test_support as support
 # This little helper class is essential for testing pdb under doctest.
 from test.test_doctest import _FakeInput
-
-# Some unittest tests spawn a new instance of pdb.
-prev_pypath = [os.environ['PYTHONPATH']] if 'PYTHONPATH' in os.environ else []
-os.environ['PYTHONPATH'] = os.pathsep.join(prev_pypath +
-                                           [os.path.abspath('pdb_clone')])
 
 class PdbTestInput(object):
     """Context manager that makes testing Pdb in doctests easier."""
