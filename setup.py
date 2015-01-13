@@ -11,42 +11,16 @@ import doctest
 import importlib
 import shutil
 import test.test_support as support
-from distutils.core import Command, Extension, setup
 from distutils.errors import *
-from distutils.command.install import install as _install
-from distutils.command.sdist import sdist as _sdist
-from distutils.command.build_scripts import build_scripts as _build_scripts
-from distutils.command.build_ext import build_ext as _build_ext
 from unittest import defaultTestLoader
+try:
+    from setuptools import setup, Extension, Command
+    from setuptools.command.build_ext import build_ext as _build_ext
+except ImportError:
+    from distutils.core import setup, Extension, Command
+    from distutils.command.build_ext import build_ext as _build_ext
 
 from pdb_clone import __version__
-
-# Installation path of pdb-clone.
-pdbclone_path = None
-
-class install(_install):
-    def run(self):
-        global pdbclone_path
-        pdbclone_path = self.install_platlib
-        _install.run(self)
-
-class build_scripts(_build_scripts):
-    def run(self):
-        """Add pdbclone_path to pdb-clone in a 'home scheme' installation."""
-        assert pdbclone_path is not None
-        self.executable += "\n\npdbclone_path = '%s'" % pdbclone_path
-        if pdbclone_path not in sys.path:
-            self.executable += '\nimport sys\n'
-            self.executable += "sys.path.append(pdbclone_path)"
-        _build_scripts.run(self)
-
-class sdist(_sdist):
-    """Subclass sdist to force copying symlinked files."""
-    def copy_file(self, infile, outfile, preserve_mode=1, preserve_times=1,
-            link=None, level=1):
-        return Command.copy_file(self, infile, outfile,
-                preserve_mode=preserve_mode, preserve_times=preserve_times,
-                link=None, level=level)
 
 class build_ext(_build_ext):
     def run(self):
@@ -136,12 +110,8 @@ class Test(Command):
         result = 'failed' if failed else 'ok'
         print '{:d} test{} {}.'.format(cnt, plural, result)
 
-
 setup(
-    cmdclass={'sdist': sdist,
-              'build_scripts': build_scripts,
-              'install': install,
-              'build_ext': build_ext,
+    cmdclass={'build_ext': build_ext,
               'test': Test},
     scripts = ['pdb-clone', 'pdb-attach'],
     ext_modules  =  [Extension('pdb_clone._bdb',

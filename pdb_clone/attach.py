@@ -463,24 +463,12 @@ def gdb_terminated(msg):
     clist = ('program exited normally', 'zombie', 'ptrace: No such process')
     return any(x in msg for x in clist)
 
-def augmented_environ(libpath):
-    environ = dict(os.environ)
-    if libpath:
-        if not os.path.isdir(libpath):
-            print('%s is not a directory.' % libpath)
-            sys.exit(1)
-        pythonpath = environ.get('PYTHONPATH', '').split(os.pathsep)
-        pythonpath.append(libpath)
-        environ['PYTHONPATH'] = os.pathsep.join(pythonpath).lstrip(os.pathsep)
-    return environ
-
-def spawn_gdb(pid, libpath, address=DFLT_ADDRESS, gdb='gdb', verbose=False,
+def spawn_gdb(pid, address=DFLT_ADDRESS, gdb='gdb', verbose=False,
               ctx=None, proc_iut=None):
     """Spawn gdb and attach to a process."""
 
     parent, child = socket.socketpair()
     proc = Popen([gdb, '--interpreter=mi', '-nx'],
-                    env=augmented_environ(libpath),
                     bufsize=0, stdin=child, stdout=child, stderr=STDOUT)
     child.close()
 
@@ -493,7 +481,7 @@ def spawn_gdb(pid, libpath, address=DFLT_ADDRESS, gdb='gdb', verbose=False,
     proc.wait()
     return gdb.error
 
-def attach_loop(argv, libpath):
+def attach_loop(argv):
     """Spawn the process, then repeatedly attach to the process."""
 
     # Check if the pdbhandler module is built into python.
@@ -513,7 +501,7 @@ def attach_loop(argv, libpath):
         proc = Popen(args)
     else:
         args.extend(argv)
-        proc = Popen(args, env=augmented_environ(libpath))
+        proc = Popen(args)
 
     # Repeatedly attach to the process using the '-X' python option or gdb.
     ctx = Context()
@@ -529,7 +517,7 @@ def attach_loop(argv, libpath):
             connect_process(asock, ctx, proc)
             asyncore.loop(map=connections)
         else:
-            error = spawn_gdb(proc.pid, libpath, ctx=ctx, proc_iut=proc)
+            error = spawn_gdb(proc.pid, ctx=ctx, proc_iut=proc)
         time.sleep(random.random())
 
     if error and gdb_terminated(error):
@@ -578,11 +566,11 @@ with the remainder of the command line arguments and repeatedly attach
 (followed by detach) to this process until the process exits.
 """
 
-def main(libpath):
+def main():
     GDB = 'gdb'
 
     if len(sys.argv) > 2 and sys.argv[1] in ('-t', '--test'):
-        sys.exit(attach_loop(sys.argv[2:], libpath))
+        sys.exit(attach_loop(sys.argv[2:]))
 
     parser = argparse.ArgumentParser(description=__doc__.strip(),
             epilog=epilog)
@@ -621,7 +609,7 @@ def main(libpath):
             attach(address)
         else:
             args.gdb = GDB if args.gdb is None else args.gdb
-            error = spawn_gdb(args.pid, libpath, address,
+            error = spawn_gdb(args.pid, address,
                               args.gdb, args.verbose)
             if error:
                 print(error)
