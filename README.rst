@@ -26,10 +26,7 @@ Report bugs to the `issue tracker <http://code.google.com/p/pdb-clone/issues/lis
 
 For example, to install the Python 3 version of pdb-clone version 1.9 with pip::
 
-    sudo pip install pdb-clone==1.9.py3 --egg
-
-This requires *pip 1.2* or above. *pip 1.2* fixes `pip issue 3 <https://github.com/pypa/pip/issues/3>`_ by adding the ``--egg`` option so as not to use ``single-version-externally-managed``. Unfortunately ``single-version-externally-managed`` seems to break all the Python packages based on the standard library ``distutils``.
-
+    sudo pip install pdb-clone==1.9.py3
 
 **Usage**
 
