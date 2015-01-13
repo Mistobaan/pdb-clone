@@ -7,40 +7,13 @@ import doctest
 import importlib
 import shutil
 import test.support as support
-from distutils.core import Command, Extension, setup
-from distutils.command.install import install as _install
-from distutils.command.sdist import sdist as _sdist
-from distutils.command.build_scripts import build_scripts as _build_scripts
 from unittest import defaultTestLoader
+try:
+    from setuptools import setup, Extension, Command
+except ImportError:
+    from distutils.core import setup, Extension, Command
 
 from pdb_clone import __version__
-
-# Installation path of pdb-clone.
-pdbclone_path = None
-
-class install(_install):
-    def run(self):
-        global pdbclone_path
-        pdbclone_path = self.install_platlib
-        _install.run(self)
-
-class build_scripts(_build_scripts):
-    def run(self):
-        """Add pdbclone_path to pdb-clone in a 'home scheme' installation."""
-        assert pdbclone_path is not None
-        self.executable += "\n\npdbclone_path = '%s'" % pdbclone_path
-        if pdbclone_path not in sys.path:
-            self.executable += '\nimport sys\n'
-            self.executable += "sys.path.append(pdbclone_path)"
-        _build_scripts.run(self)
-
-class sdist(_sdist):
-    """Subclass sdist to force copying symlinked files."""
-    def copy_file(self, infile, outfile, preserve_mode=1, preserve_times=1,
-            link=None, level=1):
-        return Command.copy_file(self, infile, outfile,
-                preserve_mode=preserve_mode, preserve_times=preserve_times,
-                link=None, level=level)
 
 class Test(Command):
     description = 'run the test suite'
@@ -127,10 +100,7 @@ with open('README.rst') as f:
     long_description = f.read()
 
 setup(
-    cmdclass = {'sdist': sdist,
-              'build_scripts': build_scripts,
-              'install': install,
-              'test': Test},
+    cmdclass = {'test': Test},
     scripts = ['pdb-clone', 'pdb-attach'],
     ext_modules  =  [Extension('pdb_clone._bdb',
                         sources=['pdb_clone/_bdbmodule.c'], optional=True),

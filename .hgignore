@@ -4,3 +4,5 @@ syntax: glob
 *.swo
 MANIFEST
 
+syntax: regexp
+^pdb_clone.egg-info\/.*$
