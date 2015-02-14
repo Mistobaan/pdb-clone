@@ -8,6 +8,7 @@ import unittest
 import subprocess
 import textwrap
 import importlib
+import errno
 from test.support import strip_python_stderr
 from pdb_clone import pdb, DFLT_ADDRESS
 from pdb_clone import attach as pdb_attach
@@ -19,6 +20,9 @@ except ImportError:
 from test import support
 # This little helper class is essential for testing pdb under doctest.
 from test.test_doctest import _FakeInput
+
+# Python 3.3 or newer
+PY33 = (sys.version_info >= (3, 3))
 
 class PdbTestInput(object):
     """Context manager that makes testing Pdb in doctests easier."""
@@ -671,117 +675,119 @@ def test_next_until_return_at_return_event():
     (Pdb) continue
     """
 
-def test_pdb_next_command_for_generator():
-    """Testing skip unwindng stack on yield for generators for "next" command
+if PY33:
+    def test_pdb_next_command_for_generator():
+        """Testing skip unwindng stack on yield for generators for "next" command
 
-    >>> def test_gen():
-    ...     yield 0
-    ...     return 1
-    ...     yield 2
+        >>> def test_gen():
+        ...     yield 0
+        ...     return 1
+        ...     yield 2
 
-    >>> def test_function():
-    ...     from pdb_clone import pdb; pdb.Pdb(nosigint=True).set_trace()
-    ...     it = test_gen()
-    ...     try:
-    ...         assert next(it) == 0
-    ...         next(it)
-    ...     except StopIteration as ex:
-    ...         assert ex.value == 1
-    ...     print("finished")
+        >>> def test_function():
+        ...     from pdb_clone import pdb; pdb.Pdb(nosigint=True).set_trace()
+        ...     it = test_gen()
+        ...     try:
+        ...         assert next(it) == 0
+        ...         next(it)
+        ...     except StopIteration as ex:
+        ...         assert ex.value == 1
+        ...     print("finished")
 
-    >>> with PdbTestInput(['step',
-    ...                    'step',
-    ...                    'step',
-    ...                    'next',
-    ...                    'next',
-    ...                    'step',
-    ...                    'step',
-    ...                    'continue']):
-    ...     test_function()
-    > <doctest test.test_pdb.test_pdb_next_command_for_generator[1]>(3)test_function()
-    -> it = test_gen()
-    (Pdb) step
-    > <doctest test.test_pdb.test_pdb_next_command_for_generator[1]>(4)test_function()
-    -> try:
-    (Pdb) step
-    > <doctest test.test_pdb.test_pdb_next_command_for_generator[1]>(5)test_function()
-    -> assert next(it) == 0
-    (Pdb) step
-    --Call--
-    > <doctest test.test_pdb.test_pdb_next_command_for_generator[0]>(1)test_gen()
-    -> def test_gen():
-    (Pdb) next
-    > <doctest test.test_pdb.test_pdb_next_command_for_generator[0]>(2)test_gen()
-    -> yield 0
-    (Pdb) next
-    > <doctest test.test_pdb.test_pdb_next_command_for_generator[0]>(3)test_gen()
-    -> return 1
-    (Pdb) step
-    --Return--
-    > <doctest test.test_pdb.test_pdb_next_command_for_generator[0]>(3)test_gen()->1
-    -> return 1
-    (Pdb) step
-    --Exception--
-    StopIteration: 1
-    > <doctest test.test_pdb.test_pdb_next_command_for_generator[1]>(6)test_function()
-    -> next(it)
-    (Pdb) continue
-    finished
-    """
+        >>> with PdbTestInput(['step',
+        ...                    'step',
+        ...                    'step',
+        ...                    'next',
+        ...                    'next',
+        ...                    'step',
+        ...                    'step',
+        ...                    'continue']):
+        ...     test_function()
+        > <doctest test.test_pdb.test_pdb_next_command_for_generator[1]>(3)test_function()
+        -> it = test_gen()
+        (Pdb) step
+        > <doctest test.test_pdb.test_pdb_next_command_for_generator[1]>(4)test_function()
+        -> try:
+        (Pdb) step
+        > <doctest test.test_pdb.test_pdb_next_command_for_generator[1]>(5)test_function()
+        -> assert next(it) == 0
+        (Pdb) step
+        --Call--
+        > <doctest test.test_pdb.test_pdb_next_command_for_generator[0]>(1)test_gen()
+        -> def test_gen():
+        (Pdb) next
+        > <doctest test.test_pdb.test_pdb_next_command_for_generator[0]>(2)test_gen()
+        -> yield 0
+        (Pdb) next
+        > <doctest test.test_pdb.test_pdb_next_command_for_generator[0]>(3)test_gen()
+        -> return 1
+        (Pdb) step
+        --Return--
+        > <doctest test.test_pdb.test_pdb_next_command_for_generator[0]>(3)test_gen()->1
+        -> return 1
+        (Pdb) step
+        --Exception--
+        StopIteration: 1
+        > <doctest test.test_pdb.test_pdb_next_command_for_generator[1]>(6)test_function()
+        -> next(it)
+        (Pdb) continue
+        finished
+        """
 
-def test_pdb_return_command_for_generator():
-    """Testing no unwindng stack on yield for generators
-       for "return" command
+if PY33:
+    def test_pdb_return_command_for_generator():
+        """Testing no unwindng stack on yield for generators
+           for "return" command
 
-    >>> def test_gen():
-    ...     yield 0
-    ...     return 1
-    ...     yield 2
+        >>> def test_gen():
+        ...     yield 0
+        ...     return 1
+        ...     yield 2
 
-    >>> def test_function():
-    ...     from pdb_clone import pdb; pdb.Pdb(nosigint=True).set_trace()
-    ...     it = test_gen()
-    ...     try:
-    ...         assert next(it) == 0
-    ...         next(it)
-    ...     except StopIteration as ex:
-    ...         assert ex.value == 1
-    ...     print("finished")
+        >>> def test_function():
+        ...     from pdb_clone import pdb; pdb.Pdb(nosigint=True).set_trace()
+        ...     it = test_gen()
+        ...     try:
+        ...         assert next(it) == 0
+        ...         next(it)
+        ...     except StopIteration as ex:
+        ...         assert ex.value == 1
+        ...     print("finished")
 
-    >>> with PdbTestInput(['step',
-    ...                    'step',
-    ...                    'step',
-    ...                    'return',
-    ...                    'step',
-    ...                    'step',
-    ...                    'continue']):
-    ...     test_function()
-    > <doctest test.test_pdb.test_pdb_return_command_for_generator[1]>(3)test_function()
-    -> it = test_gen()
-    (Pdb) step
-    > <doctest test.test_pdb.test_pdb_return_command_for_generator[1]>(4)test_function()
-    -> try:
-    (Pdb) step
-    > <doctest test.test_pdb.test_pdb_return_command_for_generator[1]>(5)test_function()
-    -> assert next(it) == 0
-    (Pdb) step
-    --Call--
-    > <doctest test.test_pdb.test_pdb_return_command_for_generator[0]>(1)test_gen()
-    -> def test_gen():
-    (Pdb) return
-    --Exception--
-    StopIteration: 1
-    > <doctest test.test_pdb.test_pdb_return_command_for_generator[1]>(6)test_function()
-    -> next(it)
-    (Pdb) step
-    > <doctest test.test_pdb.test_pdb_return_command_for_generator[1]>(7)test_function()
-    -> except StopIteration as ex:
-    (Pdb) step
-    > <doctest test.test_pdb.test_pdb_return_command_for_generator[1]>(8)test_function()
-    -> assert ex.value == 1
-    (Pdb) continue
-    finished
-    """
+        >>> with PdbTestInput(['step',
+        ...                    'step',
+        ...                    'step',
+        ...                    'return',
+        ...                    'step',
+        ...                    'step',
+        ...                    'continue']):
+        ...     test_function()
+        > <doctest test.test_pdb.test_pdb_return_command_for_generator[1]>(3)test_function()
+        -> it = test_gen()
+        (Pdb) step
+        > <doctest test.test_pdb.test_pdb_return_command_for_generator[1]>(4)test_function()
+        -> try:
+        (Pdb) step
+        > <doctest test.test_pdb.test_pdb_return_command_for_generator[1]>(5)test_function()
+        -> assert next(it) == 0
+        (Pdb) step
+        --Call--
+        > <doctest test.test_pdb.test_pdb_return_command_for_generator[0]>(1)test_gen()
+        -> def test_gen():
+        (Pdb) return
+        --Exception--
+        StopIteration: 1
+        > <doctest test.test_pdb.test_pdb_return_command_for_generator[1]>(6)test_function()
+        -> next(it)
+        (Pdb) step
+        > <doctest test.test_pdb.test_pdb_return_command_for_generator[1]>(7)test_function()
+        -> except StopIteration as ex:
+        (Pdb) step
+        > <doctest test.test_pdb.test_pdb_return_command_for_generator[1]>(8)test_function()
+        -> assert ex.value == 1
+        (Pdb) continue
+        finished
+        """
 
 def test_pdb_until_command_for_generator():
     """Testing no unwindng stack on yield for generators
@@ -827,95 +833,97 @@ def test_pdb_until_command_for_generator():
     finished
     """
 
-def test_pdb_next_command_in_generator_for_loop():
-    """The next command on returning from a generator controled by a for loop.
+if PY33:
+    def test_pdb_next_command_in_generator_for_loop():
+        """The next command on returning from a generator controled by a for loop.
 
-    >>> def test_gen():
-    ...     yield 0
-    ...     return 1
+        >>> def test_gen():
+        ...     yield 0
+        ...     return 1
 
-    >>> def test_function():
-    ...     from pdb_clone import pdb, bdb; bdb.Breakpoint.next = 1; pdb.Pdb(nosigint=True).set_trace()
-    ...     for i in test_gen():
-    ...         print('value', i)
-    ...     x = 123
+        >>> def test_function():
+        ...     from pdb_clone import pdb, bdb; bdb.Breakpoint.next = 1; pdb.Pdb(nosigint=True).set_trace()
+        ...     for i in test_gen():
+        ...         print('value', i)
+        ...     x = 123
 
-    >>> with PdbTestInput(['break test_gen',
-    ...                    'continue',
-    ...                    'next',
-    ...                    'next',
-    ...                    'next',
-    ...                    'continue']):
-    ...     test_function()
-    > <doctest test.test_pdb.test_pdb_next_command_in_generator_for_loop[1]>(3)test_function()
-    -> for i in test_gen():
-    (Pdb) break test_gen
-    Breakpoint 1 at <doctest test.test_pdb.test_pdb_next_command_in_generator_for_loop[0]>:1
-    (Pdb) continue
-    > <doctest test.test_pdb.test_pdb_next_command_in_generator_for_loop[0]>(2)test_gen()
-    -> yield 0
-    (Pdb) next
-    value 0
-    > <doctest test.test_pdb.test_pdb_next_command_in_generator_for_loop[0]>(3)test_gen()
-    -> return 1
-    (Pdb) next
-    --Exception--
-    Internal StopIteration: 1
-    > <doctest test.test_pdb.test_pdb_next_command_in_generator_for_loop[1]>(3)test_function()
-    -> for i in test_gen():
-    (Pdb) next
-    > <doctest test.test_pdb.test_pdb_next_command_in_generator_for_loop[1]>(5)test_function()
-    -> x = 123
-    (Pdb) continue
-    """
+        >>> with PdbTestInput(['break test_gen',
+        ...                    'continue',
+        ...                    'next',
+        ...                    'next',
+        ...                    'next',
+        ...                    'continue']):
+        ...     test_function()
+        > <doctest test.test_pdb.test_pdb_next_command_in_generator_for_loop[1]>(3)test_function()
+        -> for i in test_gen():
+        (Pdb) break test_gen
+        Breakpoint 1 at <doctest test.test_pdb.test_pdb_next_command_in_generator_for_loop[0]>:1
+        (Pdb) continue
+        > <doctest test.test_pdb.test_pdb_next_command_in_generator_for_loop[0]>(2)test_gen()
+        -> yield 0
+        (Pdb) next
+        value 0
+        > <doctest test.test_pdb.test_pdb_next_command_in_generator_for_loop[0]>(3)test_gen()
+        -> return 1
+        (Pdb) next
+        --Exception--
+        Internal StopIteration: 1
+        > <doctest test.test_pdb.test_pdb_next_command_in_generator_for_loop[1]>(3)test_function()
+        -> for i in test_gen():
+        (Pdb) next
+        > <doctest test.test_pdb.test_pdb_next_command_in_generator_for_loop[1]>(5)test_function()
+        -> x = 123
+        (Pdb) continue
+        """
 
-def test_pdb_next_command_subiterator():
-    """The next command in a generator with a subiterator.
+if PY33:
+    def test_pdb_next_command_subiterator():
+        """The next command in a generator with a subiterator.
 
-    >>> def test_subgenerator():
-    ...     yield 0
-    ...     return 1
+        >>> def test_subgenerator():
+        ...     yield 0
+        ...     return 1
 
-    >>> def test_gen():
-    ...     x = yield from test_subgenerator()
-    ...     return x
+        >>> def test_gen():
+        ...     x = yield from test_subgenerator()
+        ...     return x
 
-    >>> def test_function():
-    ...     from pdb_clone import pdb; pdb.Pdb(nosigint=True).set_trace()
-    ...     for i in test_gen():
-    ...         print('value', i)
-    ...     x = 123
+        >>> def test_function():
+        ...     from pdb_clone import pdb; pdb.Pdb(nosigint=True).set_trace()
+        ...     for i in test_gen():
+        ...         print('value', i)
+        ...     x = 123
 
-    >>> with PdbTestInput(['step',
-    ...                    'step',
-    ...                    'next',
-    ...                    'next',
-    ...                    'next',
-    ...                    'continue']):
-    ...     test_function()
-    > <doctest test.test_pdb.test_pdb_next_command_subiterator[2]>(3)test_function()
-    -> for i in test_gen():
-    (Pdb) step
-    --Call--
-    > <doctest test.test_pdb.test_pdb_next_command_subiterator[1]>(1)test_gen()
-    -> def test_gen():
-    (Pdb) step
-    > <doctest test.test_pdb.test_pdb_next_command_subiterator[1]>(2)test_gen()
-    -> x = yield from test_subgenerator()
-    (Pdb) next
-    value 0
-    > <doctest test.test_pdb.test_pdb_next_command_subiterator[1]>(3)test_gen()
-    -> return x
-    (Pdb) next
-    --Exception--
-    Internal StopIteration: 1
-    > <doctest test.test_pdb.test_pdb_next_command_subiterator[2]>(3)test_function()
-    -> for i in test_gen():
-    (Pdb) next
-    > <doctest test.test_pdb.test_pdb_next_command_subiterator[2]>(5)test_function()
-    -> x = 123
-    (Pdb) continue
-    """
+        >>> with PdbTestInput(['step',
+        ...                    'step',
+        ...                    'next',
+        ...                    'next',
+        ...                    'next',
+        ...                    'continue']):
+        ...     test_function()
+        > <doctest test.test_pdb.test_pdb_next_command_subiterator[2]>(3)test_function()
+        -> for i in test_gen():
+        (Pdb) step
+        --Call--
+        > <doctest test.test_pdb.test_pdb_next_command_subiterator[1]>(1)test_gen()
+        -> def test_gen():
+        (Pdb) step
+        > <doctest test.test_pdb.test_pdb_next_command_subiterator[1]>(2)test_gen()
+        -> x = yield from test_subgenerator()
+        (Pdb) next
+        value 0
+        > <doctest test.test_pdb.test_pdb_next_command_subiterator[1]>(3)test_gen()
+        -> return x
+        (Pdb) next
+        --Exception--
+        Internal StopIteration: 1
+        > <doctest test.test_pdb.test_pdb_next_command_subiterator[2]>(3)test_function()
+        -> for i in test_gen():
+        (Pdb) next
+        > <doctest test.test_pdb.test_pdb_next_command_subiterator[2]>(5)test_function()
+        -> x = 123
+        (Pdb) continue
+        """
 
 def test_thread_command():
     """Testing the thread command.
@@ -1086,16 +1094,16 @@ def test_pdb_issue_20766():
     ...         pdbinst = foo(pdbinst)
 
     >>> with PdbTestInput(['continue',
-    ...                    'continue']):
+    ...                    'continue']):    # doctest: +ELLIPSIS
     ...     test_function()
     > <doctest test.test_pdb.test_pdb_issue_20766[1]>(4)foo()
     -> gc.collect()
     (Pdb) continue
-    [<module '_signal' (built-in)>, '_signal']
+    [<module '...signal' (built-in)>, '...signal']
     > <doctest test.test_pdb.test_pdb_issue_20766[1]>(4)foo()
     -> gc.collect()
     (Pdb) continue
-    [<module '_signal' (built-in)>, '_signal']
+    [<module '...signal' (built-in)>, '...signal']
     self._previous_sigint_handler does not refer to the previous Pdb instance.
     """
 
@@ -1562,7 +1570,9 @@ class RemoteDebugging(unittest.TestCase):
         try:
             pdb_attach.attach(self.address, io.StringIO('\n'.join(commands)),
                               attach_stdout, verbose=False)
-        except (ConnectionRefusedError, SystemExit):
+        except (IOError, SystemExit) as err:
+            if isinstance(err, IOError) and err.errno != errno.ECONNREFUSED:
+                raise
             self.proc.terminate()
             stdout, stderr = self.proc.communicate()
             if not self.proc_error(stderr):

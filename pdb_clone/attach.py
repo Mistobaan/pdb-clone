@@ -21,10 +21,12 @@ import random
 import socket
 import asyncore
 import asynchat
+import errno
 from itertools import takewhile
 from collections import deque
-from subprocess import Popen, STDOUT, DEVNULL
-from pdb_clone import pdb, DFLT_ADDRESS
+from subprocess import Popen, STDOUT, PIPE
+
+from . import pdb, DFLT_ADDRESS
 
 prompts = ('(Pdb) ', '(com) ', '((Pdb)) ', '>>> ', '... ')
 line_prmpts = tuple('\n%s' % p for p in prompts)
@@ -45,7 +47,7 @@ class AttachSocket(asynchat.async_chat, cmd.Cmd):
         self._previous_sigint_handler = None
 
     def message(self, *objs, sep=' ', end='\n', flush=False):
-        print(*objs, file=self.stdout, sep=sep, end=end, flush=flush)
+        printflush(*objs, file=self.stdout, sep=sep, end=end, flush=flush)
 
     def sigint_handler(self, signum, frame):
         if self.allow_kbdint:
@@ -62,7 +64,7 @@ class AttachSocket(asynchat.async_chat, cmd.Cmd):
     def handle_error(self):
         self.close()
         err = sys.exc_info()[1]
-        if isinstance(err, ConnectionRefusedError):
+        if isinstance(err, IOError) and err.errno == errno.ECONNREFUSED:
             self.message(err)
             self.message('[if using gdb to attach to the process,'
                                     ' did you forget to quit gdb ?]')
@@ -98,24 +100,26 @@ class AttachSocket(asynchat.async_chat, cmd.Cmd):
         while not self.connected:
             try:
                 self.connect(address)
-            except ConnectionRefusedError:
+            except IOError as err:
+                if err.errno != errno.ECONNREFUSED:
+                    raise
                 # Skip printing the first connection failures.
                 if count >= skip_connect and verbose:
                     if count == skip_connect:
-                        print('Connecting to remote pdb' +
-                                skip_connect * '.', end='', flush=True)
+                        printflush('Connecting to remote pdb' +
+                                skip_connect * '.', end='')
                     else:
-                        print('.', end='', flush=True)
+                        printflush('.', end='')
                 count += 1
                 if count >= 20:
                     if verbose:
-                        print('failed', flush=True)
+                        printflush('failed')
                     self.close()
                     raise
                 yield count
                 time.sleep(0.200)
         if verbose and count > skip_connect:
-            print('ok', flush=True)
+            printflush('ok')
 
     def get_header(self, line):
         if line.startswith('PROCESS_PID:'):
@@ -231,8 +235,8 @@ class StatementLine:
         if line in self.lines:
             if not self.skipping:
                 self.skipping = True
-                print('Skipping lines', end='', flush=True)
-            print('.', end='', flush=True)
+                printflush('Skipping lines', end='')
+            printflush('.', end='')
             return True
         elif line:
             self.lines.append(line)
@@ -246,7 +250,7 @@ class StatementLine:
             if self.skipping:
                 self.skipping = False
                 print('')
-            print(self.line, flush=True)
+            printflush(self.line)
 
 class Context:
     """The execution context shared by all the GdbSocket instances."""
@@ -293,7 +297,7 @@ class GdbSocket(asynchat.async_chat):
     def handle_close (self):
         if self.connected:
             if not self.ctx:
-                print('Socket closed by gdb.', flush=True)
+                printflush('Socket closed by gdb.')
             self.close()
 
             # Handle anbormal gdb termination.
@@ -302,14 +306,14 @@ class GdbSocket(asynchat.async_chat):
                 self.state = self.ST_TERMINATED
                 signals = dict((getattr(signal, n), n) for n in dir(signal)
                                                     if n.startswith('SIG'))
-                print('Gdb terminated, got signal %s.'
-                                        % signals.get(-rc, -rc), flush=True)
+                printflush('Gdb terminated, got signal %s.'
+                                        % signals.get(-rc, -rc))
 
     def mi_command(self, line):
         if not line.endswith('\n'):
             line += '\n'
         if self.verbose:
-            print('+++', line, end='', flush=True)
+            printflush('+++', line, end='')
         self.push(line.encode())
 
     def cli_command(self, cmd):
@@ -329,7 +333,7 @@ class GdbSocket(asynchat.async_chat):
             asock = AttachSocketWithDetach(self.connections, stdout=dev_null)
         else:
             asock = AttachSocket(self.connections)
-        asock.create_socket()
+        asock.create_socket(socket.AF_INET, socket.SOCK_STREAM)
         connect_process(asock, self.ctx, self.proc_iut, address=self.address)
 
     def collect_incoming_data(self, data):
@@ -339,7 +343,7 @@ class GdbSocket(asynchat.async_chat):
         line = self.ibuff.getvalue()
         self.ibuff = io.StringIO()
         if self.verbose:
-            print(line, flush=True)
+            printflush(line)
         elif line.startswith('~"->'):
             line = line[1:].strip('"')
             line = line[:-2] if line.endswith(r'\n') else line
@@ -417,6 +421,11 @@ class GdbSocket(asynchat.async_chat):
                 self.ctx.stmt.print()
             return True
 
+def printflush(*args, file=sys.stdout, flush=True, **kwds):
+    print(*args, file=file, **kwds)
+    if flush:
+        file.flush()
+
 def utf8_decode(data):
     return data.decode(encoding='utf-8')
 
@@ -481,7 +490,7 @@ def attach_loop(argv):
     # Check if the pdbhandler module is built into python.
     p = Popen((sys.executable, '-X', 'pdbhandler', '-c',
                 'import pdbhandler; pdbhandler.get_handler().host'),
-               stdout=DEVNULL, stderr=DEVNULL)
+               stdout=PIPE, stderr=STDOUT)
     p.wait()
     use_xoption = True if p.returncode == 0 else False
 
@@ -507,7 +516,7 @@ def attach_loop(argv):
             connections = {}
             dev_null = io.StringIO()
             asock = AttachSocketWithDetach(connections, stdout=dev_null)
-            asock.create_socket()
+            asock.create_socket(socket.AF_INET, socket.SOCK_STREAM)
             connect_process(asock, ctx, proc)
             asyncore.loop(map=connections)
         else:
@@ -535,7 +544,9 @@ def connect_process(asock, ctx, proc, address=DFLT_ADDRESS):
             if proc and proc.poll() is not None:
                 asock.close()
                 return
-    except ConnectionRefusedError:
+    except IOError as err:
+        if err.errno != errno.ECONNREFUSED:
+            raise
         if ctx:
             ctx.result.add('Failed to connect to remote pdb')
         else:
@@ -547,7 +558,7 @@ def connect_process(asock, ctx, proc, address=DFLT_ADDRESS):
 def attach(address=DFLT_ADDRESS, stdin=None, stdout=None, verbose=True):
     connections = {}
     asock = AttachSocket(connections, stdin=stdin, stdout=stdout)
-    asock.create_socket()
+    asock.create_socket(socket.AF_INET, socket.SOCK_STREAM)
     for count in asock.connect_retry(address, verbose):
         pass
     asyncore.loop(map=connections)
