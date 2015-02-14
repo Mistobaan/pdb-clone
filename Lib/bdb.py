@@ -239,11 +239,13 @@ class BdbModule:
 
             def generic_visit(self, node):
                 for child in ast.iter_child_nodes(node):
-                    yield from self.visit(child)
+                    for item in self.visit(child):
+                        yield item
 
             def visit_ClassDef(self, node):
                 self.clss.append(node.name)
-                yield from self.generic_visit(node)
+                for item in self.generic_visit(node):
+                    yield item
                 self.clss.pop()
 
             def visit_FunctionDef(self, node):

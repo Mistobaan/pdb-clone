@@ -100,8 +100,10 @@ def restart_call(func, *args):
     while 1:
         try:
             return func(*args)
-        except InterruptedError:
-            continue
+        except IOError as e:
+            if e.errno == errno.EINTR:
+                continue
+            raise
 
 def safe_repr(obj):
     try:

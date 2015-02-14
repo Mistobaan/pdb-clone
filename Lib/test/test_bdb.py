@@ -9,6 +9,9 @@ from itertools import islice, chain
 
 from pdb_clone import bdb
 
+# Python 3.3 or newer
+PY33 = (sys.version_info >= (3, 3))
+
 # Set 'debug' true to debug the test cases.
 debug = 0
 
@@ -779,6 +782,7 @@ class RunCallTestCase(SetMethodTestCase):
         ]
         self.runcall(dbg_module)
 
+    @unittest.skipIf(not PY33, "'return' with argument inside generator")
     def test_next_command_in_generator(self):
         self.create_module("""
             def test_gen():
@@ -798,6 +802,7 @@ class RunCallTestCase(SetMethodTestCase):
         ]
         self.runcall(dbg_module)
 
+    @unittest.skipIf(not PY33, "'return' with argument inside generator")
     def test_return_command_in_generator(self):
         self.create_module("""
             def test_gen():
@@ -818,6 +823,7 @@ class RunCallTestCase(SetMethodTestCase):
         ]
         self.runcall(dbg_module)
 
+    @unittest.skipIf(not PY33, "'return' with argument inside generator")
     def test_until_command_in_generator(self):
         self.create_module("""
             def test_gen():
@@ -849,6 +855,7 @@ class RunCallTestCase(SetMethodTestCase):
         ]
         self.runcall(dbg_module)
 
+    @unittest.skipIf(not PY33, "'return' with argument inside generator")
     def test_next_command_in_generator_for_loop(self):
         self.create_module("""
             def test_gen():
@@ -873,6 +880,7 @@ class RunCallTestCase(SetMethodTestCase):
         ]
         self.runcall(dbg_module)
 
+    @unittest.skipIf(not PY33, "'return' with argument inside generator")
     def test_next_command_in_generator_with_subiterator(self):
         self.create_module("""
             def test_subgen():
@@ -897,6 +905,7 @@ class RunCallTestCase(SetMethodTestCase):
         ]
         self.runcall(dbg_module)
 
+    @unittest.skipIf(not PY33, "'return' with argument inside generator")
     def test_return_command_in_generator_with_subiterator(self):
         self.create_module("""
             def test_subgen():

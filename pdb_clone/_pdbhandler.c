@@ -1,6 +1,7 @@
 #include "Python.h"
 #include "frameobject.h"
 
+#if PY_MAJOR_VERSION >= 3
 #ifndef MS_WINDOWS
 #include <signal.h>
 
@@ -102,7 +103,11 @@ bootstrappdb(void *args)
 
 #ifdef WITH_THREAD
     /* Do not instantiate pdb when stopped in a subinterpreter. */
+# if PY_MINOR_VERSION >= 4
     if (!PyGILState_Check())
+# else
+    if (!mainstate || mainstate != PyGILState_GetThisThreadState())
+# endif
         return 0;
 #endif
 
@@ -206,7 +211,11 @@ bootstrappdb_string(char *arg)
     PyObject *addressdict = NULL;
     PyObject *host = NULL;
     PyObject *port = NULL;
+#if PY_MINOR_VERSION >= 3
     PyObject *address = PyUnicode_DecodeLocale(arg, NULL);
+#else
+    PyObject *address = PyUnicode_DecodeFSDefault(arg);
+#endif
     int rc = -1;
 
     if (address == NULL)
@@ -217,14 +226,25 @@ bootstrappdb_string(char *arg)
         goto err;
 
     if (Py_SIZE(addresslist) >= 1) {
+#if PY_MINOR_VERSION >= 3
         host = PyUnicode_EncodeLocale(PyList_GET_ITEM(addresslist, 0), NULL);
+#else
+        host = PyUnicode_EncodeFSDefault(PyList_GET_ITEM(addresslist, 0));
+#endif
         if (host == NULL)
             goto err;
         if (PyDict_SetItemString(addressdict, "host", host) != 0)
             goto err;
     }
     if (Py_SIZE(addresslist) >= 2) {
+#if PY_MINOR_VERSION >= 3
         port = PyLong_FromUnicodeObject(PyList_GET_ITEM(addresslist, 1), 10);
+#else
+        Py_ssize_t length;
+        PyObject *item = PyList_GET_ITEM(addresslist, 1);
+        length = PyUnicode_GET_SIZE(item);
+        port = PyLong_FromUnicode(PyUnicode_AS_UNICODE(item), length, 10);
+#endif
         if (port == NULL)
             goto err;
         if (PyDict_SetItemString(addressdict, "port", port) != 0)
@@ -344,7 +364,11 @@ _register(pdbhandler_signal_t *psignal, PyObject *host, int port, int signum)
     if ((address=PyDict_New()) == NULL)
         return -1;
     if (host != NULL) {
+#if PY_MINOR_VERSION >= 3
         host_bytes = PyUnicode_EncodeLocale(host, NULL);
+#else
+        host_bytes = PyUnicode_EncodeFSDefault(host);
+#endif
         if (host_bytes == NULL)
             goto err;
         if (PyDict_SetItemString(address, "host", host_bytes) != 0)
@@ -474,4 +498,5 @@ PyInit__pdbhandler(void)
 {
     return PyModule_Create(&_pdbhandler_def);
 }
+#endif  /* PY_MAJOR_VERSION >= 3 */
 

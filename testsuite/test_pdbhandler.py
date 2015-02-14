@@ -4,6 +4,7 @@ import io
 import signal
 import unittest
 import subprocess
+import errno
 from test.support import strip_python_stderr
 from pdb_clone import DFLT_ADDRESS
 from pdb_clone import attach as pdb_attach
@@ -30,7 +31,9 @@ class RemoteDebugging(unittest.TestCase):
         try:
             pdb_attach.attach(self.address, io.StringIO('\n'.join(commands)),
                               attach_stdout, verbose=False)
-        except (ConnectionRefusedError, SystemExit):
+        except (IOError, SystemExit) as err:
+            if isinstance(err, IOError) and err.errno != errno.ECONNREFUSED:
+                raise
             self.proc.terminate()
             stdout, stderr = self.proc.communicate()
             if not self.proc_error(stderr):
@@ -39,6 +42,7 @@ class RemoteDebugging(unittest.TestCase):
     def run_pdb_remotely(self, source, commands, next_commands=None):
         """Run 'source' in a spawned process."""
         header = ("""if 1:
+            import sys
             from pdb_clone import pdbhandler
             pdbhandler.register('%s', %d, %d)
             started = False""" %
@@ -68,7 +72,8 @@ class PdbHandlerTestCase(RemoteDebugging):
             i = 1
             while i:
                 if not started:
-                    print('started.', flush=True)
+                    print('started.')
+                    sys.stdout.flush()
                     started = True
                 time.sleep(.020)
             """,
@@ -88,12 +93,14 @@ class PdbHandlerTestCase(RemoteDebugging):
             second_session = 0
             while i:
                 if not started:
-                    print('started.', flush=True)
+                    print('started.')
+                    sys.stdout.flush()
                     started = True
                 i += 1
                 if second_session:
                     second_session = 0
-                    print('Ready to be attached to.', flush=True)
+                    print('Ready to be attached to.')
+                    sys.stdout.flush()
                 time.sleep(.020)
             """,
             [
@@ -114,7 +121,8 @@ class PdbHandlerTestCase(RemoteDebugging):
             i = 1
             while i:
                 if not started:
-                    print('started.', flush=True)
+                    print('started.')
+                    sys.stdout.flush()
                     started = True
                 time.sleep(.020)
             """,
@@ -135,7 +143,8 @@ class PdbHandlerTestCase(RemoteDebugging):
             i = 1
             while i:
                 if not started:
-                    print('started.', flush=True)
+                    print('started.')
+                    sys.stdout.flush()
                     started = True
                 time.sleep(.020)
             """,
@@ -158,7 +167,8 @@ class PdbHandlerTestCase(RemoteDebugging):
             i = 1
             while i:
                 if not started:
-                    print('started.', flush=True)
+                    print('started.')
+                    sys.stdout.flush()
                     started = True
                 time.sleep(.020)
             """,
