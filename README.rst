@@ -24,9 +24,9 @@ Report bugs to the `issue tracker <http://code.google.com/p/pdb-clone/issues/lis
 
 **Install**
 
-For example, to install the Python 3 version of pdb-clone version 1.9.1 with pip::
+For example, to install the Python 3 version of pdb-clone version 1.9.2 with pip::
 
-    sudo pip install pdb-clone==1.9.1.py3
+    sudo pip install pdb-clone==1.9.2.py3
 
 **Usage**
 
