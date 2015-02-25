@@ -1,4 +1,5 @@
-#! /usr/bin/env python3
+# vi:set ts=8 sts=4 sw=4 et tw=80:
+#! /usr/bin/env python
 
 """
 The Python Debugger Pdb
@@ -66,11 +67,15 @@ Debugger commands
 # NOTE: the actual command documentation is collected from docstrings of the
 # commands and is appended to __doc__ after the class has been defined.
 
+# Python 2-3 compatibility.
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
 import os
 import re
 import sys
 import cmd
-from pdb_clone import bdb
 import dis
 import code
 import glob
@@ -89,6 +94,8 @@ import shlex
 import pydoc
 from operator import attrgetter
 
+from . import PY3, PY34, exec_, eval_, bdb
+
 class Restart(Exception):
     """Causes a debugger to be restarted for the debugged python program."""
     pass
@@ -104,12 +111,6 @@ def restart_call(func, *args):
             if e.errno == errno.EINTR:
                 continue
             raise
-
-def safe_repr(obj):
-    try:
-        return repr(obj)
-    except Exception:
-        return object.__repr__(obj)
 
 def user_method(user_event):
     """Decorator of the Pdb user_* methods that controls the RemoteSocket."""
@@ -161,7 +162,10 @@ class RemoteSocket:
                 # debuggee may be playing tricks with the preferred encoding
                 # as in test_universal_newlines_communicate_encodings of
                 # test_subprocess.py.
-                self.madefile = self.socket.makefile('rw', encoding='utf-8')
+                if PY3:
+                    self.madefile = self.socket.makefile('rw', encoding='utf-8')
+                else:
+                    self.madefile = self.socket.makefile('rw')
             except KeyboardInterrupt:
                 self.close()
             except IOError as e:
@@ -324,7 +328,7 @@ def source_filename(filename):
 
 def get_fqn_fname(fqn, frame):
     try:
-        func = eval(fqn, frame.f_globals)
+        func = eval_(fqn, frame.f_globals)
     except Exception:
         # fqn is defined in a module not yet (fully) imported.
         module = inspect.getmodule(frame)
@@ -352,7 +356,7 @@ def get_fqn_fname(fqn, frame):
                 # 'import as' statement.
                 names = fqn.split('.')
                 if len(names) > 1:
-                    names[0] = eval(names[0], frame.f_globals).__name__
+                    names[0] = eval_(names[0], frame.f_globals).__name__
                     fqn = '.'.join(names)
                 if fqn.startswith(module_name) and module_name != fqn:
                     fqn = fqn[len(module_name)+1:]
@@ -578,7 +582,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         # 'yield from' or a generator controled by a for loop. No exception has
         # actually occured in this case. The debugger uses this debug event to
         # stop when the debuggee is returning from such generators.
-        prefix = 'Internal ' if (not exc_traceback
+        prefix = 'Internal ' if (PY34 and not exc_traceback
                                     and exc_type is StopIteration) else ''
         self.message('--Exception--\n%s%s' % (prefix,
             traceback.format_exception_only(exc_type, exc_value)[-1].strip()))
@@ -609,7 +613,8 @@ class Pdb(bdb.Bdb, cmd.Cmd):
                 if newvalue is not oldvalue and newvalue != oldvalue:
                     displaying[expr] = newvalue
                     self.message('display %s: %s  [old: %s]' %
-                         (expr, safe_repr(newvalue), safe_repr(oldvalue)))
+                         (expr, bdb.safe_repr(newvalue),
+                          bdb.safe_repr(oldvalue)))
 
     def interaction(self, frame, traceback):
         # restore previous signal handler
@@ -640,7 +645,12 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         # When Pdb has been instantiated in a subinterpreter, the redirection
         # must be done with the sys module of the main interpreter, not the
         # one of the subinterpreter.
-        import sys as _sys
+        if PY3:
+            import sys as _sys
+        else:
+            # Parent module 'pdb_clone' not found while handling absolute
+            # import.
+            _sys = __import__('sys', level=0)
 
         save_stdout = _sys.stdout
         save_stderr = _sys.stderr
@@ -664,8 +674,8 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         ns = self.curframe.f_globals.copy()
         ns.update(locals)
         try:
-            code = compile(line + '\n', '<stdin>', 'single')
-            self.redirect(exec, code, ns, locals)
+            code = compile(line + '\n', '<stdin>', 'single', 0, True)
+            self.redirect(exec_, code, ns, locals)
         except Exception:
             exc_info = sys.exc_info()[:2]
             self.error(traceback.format_exception_only(*exc_info)[-1].strip())
@@ -1096,7 +1106,10 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         """
         if not arg:
             try:
-                reply = input('Clear all breaks? ')
+                if PY3:
+                    reply = input('Clear all breaks? ')
+                else:
+                    reply = raw_input('Clear all breaks? ')
             except EOFError:
                 reply = 'no'
             reply = reply.strip().lower()
@@ -1365,7 +1378,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         for i in range(n):
             name = co.co_varnames[i]
             if name in dict:
-                self.message('%s = %s' % (name, safe_repr(dict[name])))
+                self.message('%s = %s' % (name, bdb.safe_repr(dict[name])))
             else:
                 self.message('%s = *** undefined ***' % (name,))
     do_a = do_args
@@ -1376,14 +1389,14 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         """
         locals = self.get_locals(self.curframe)
         if '__return__' in locals:
-            self.message(safe_repr(locals['__return__']))
+            self.message(bdb.safe_repr(locals['__return__']))
         else:
             self.error('Not yet returned!')
     do_rv = do_retval
 
     def _getval(self, arg):
         try:
-            return eval(arg, self.curframe.f_globals,
+            return eval_(arg, self.curframe.f_globals,
                             self.get_locals(self.curframe))
         except Exception:
             exc_info = sys.exc_info()[:2]
@@ -1393,10 +1406,10 @@ class Pdb(bdb.Bdb, cmd.Cmd):
     def _getval_except(self, arg, frame=None):
         try:
             if frame is None:
-                return eval(arg, self.curframe.f_globals,
+                return eval_(arg, self.curframe.f_globals,
                                 self.get_locals(self.curframe))
             else:
-                return eval(arg, frame.f_globals, frame.f_locals)
+                return eval_(arg, frame.f_globals, frame.f_locals)
         except Exception:
             exc_info = sys.exc_info()[:2]
             err = traceback.format_exception_only(*exc_info)[-1].strip()
@@ -1407,7 +1420,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         Print the value of the expression.
         """
         try:
-            self.message(safe_repr(self._getval(arg)))
+            self.message(bdb.safe_repr(self._getval(arg)))
         except Exception:
             pass
 
@@ -1419,7 +1432,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         try:
             repr(obj)
         except Exception:
-            self.message(safe_repr(obj))
+            self.message(bdb.safe_repr(obj))
         else:
             self.message(pprint.pformat(obj))
 
@@ -1577,11 +1590,11 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         if not arg:
             self.message('Currently displaying:')
             for item in self.displaying.get(self.curframe, {}).items():
-                self.message('%s: %s' % safe_repr(item))
+                self.message('%s: %s' % bdb.safe_repr(item))
         else:
             val = self._getval_except(arg)
             self.displaying.setdefault(self.curframe, {})[arg] = val
-            self.message('display %s: %s' % (arg, safe_repr(val)))
+            self.message('display %s: %s' % (arg, bdb.safe_repr(val)))
 
     complete_display = _complete_expression
 
@@ -1623,7 +1636,12 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         ns.update(self.get_locals(self.curframe))
         if isinstance(self.stdin, RemoteSocket):
             # Main interpreter redirection of the code module.
-            import sys as _sys
+            if PY3:
+                import sys as _sys
+            else:
+                # Parent module 'pdb_clone' not found while handling absolute
+                # import.
+                _sys = __import__('sys', level=0)
             code.sys = _sys
             self.redirect(code.interact, local=ns, readfunc=readfunc)
         else:
@@ -1743,10 +1761,19 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         """
         # Import the threading module in the main interpreter to get an
         # enumeration of the main interpreter threads.
-        try:
-            import threading
-        except ImportError:
-            import dummy_threading as threading
+        if PY3:
+            try:
+                import threading
+            except ImportError:
+                import dummy_threading as threading
+        else:
+            # Do not use relative import detection to avoid the RuntimeWarning:
+            # Parent module 'pdb_clone' not found while handling absolute
+            # import.
+            try:
+                threading = __import__('threading', level=0)
+            except ImportError:
+                threading = __import__('dummy_threading', level=0)
 
 
         if not self.pdb_thread:
@@ -1856,7 +1883,7 @@ class Pdb(bdb.Bdb, cmd.Cmd):
         with open(filename, "rb") as fp:
             content = fp.read()
         self.forget()
-        self.run(compile(content, self.mainpyfile, 'exec'))
+        self.run(compile(content, self.mainpyfile, 'exec', 0, True))
 
 # Collect all command help into docstring, if not run with -OO
 
@@ -2022,7 +2049,6 @@ def main():
                   " will be restarted")
 
 
-# When invoked as main program, invoke the debugger on a script
+# When invoked as main program, invoke the debugger on a script.
 if __name__ == '__main__':
-    from pdb_clone import pdb
-    pdb.main()
+    main()

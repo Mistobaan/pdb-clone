@@ -1,3 +1,4 @@
+# vi:set ts=8 sts=4 sw=4 et tw=80:
 ''' The 'py-pdb' gdb command.
 
 See https://sourceware.org/gdb/current/onlinedocs/gdb/Python.html#Python.
@@ -22,6 +23,9 @@ try:
     from libpython import Frame
 except ImportError:
     Frame = None
+
+# Python 3.0 or newer
+PY3 = (sys.version_info >= (3,))
 
 class PdbLocalError(Exception):
     """Local error in the py-pdb command that may be retried."""
@@ -150,8 +154,14 @@ def dlopen_flag(flag):
         except OSError:
             pass
 
-LOAD_DYN = "call PyRun_SimpleString(\"from _imp import load_dynamic;\
-load_dynamic('%s', '%s', None)\")"
+if PY3:
+    LOAD_DYN = ("call PyRun_SimpleString(\"from _imp import load_dynamic; "
+                "load_dynamic('%s', '%s', None)\")")
+    LOADDYNAMIC = '_PyImport_LoadDynamicModule'
+else:
+    LOAD_DYN = ("call PyRun_SimpleString(\"from imp import load_dynamic; "
+                "load_dynamic('%s', '%s')\")")
+    LOADDYNAMIC = '_PyImport_GetDynLoadFunc'
 
 class PyPdb(gdb.Command):
     """Setup pdb for remote debugging."""
@@ -212,7 +222,7 @@ class PyPdb(gdb.Command):
                 raise PdbLocalError('A signal is being processed.')
             elif name == 'dlopen':
                 in_dlopen = True
-            elif name == '_PyImport_LoadDynamicModule':
+            elif name == LOADDYNAMIC:
                 in_load_dynamic = True
             f = f.older()
 
@@ -259,9 +269,25 @@ class PyPdb(gdb.Command):
         if loader:
             method = ' using %s()' % loader
 
-        curline = get_curline()
-        if curline:
-            print(curline)
+        if PY3:
+            curline = get_curline()
+            if curline:
+                print(curline)
+        else:
+            # Some versions of gcc optimize-out or set to null the values of
+            # objects visible to the debugger (e.g. gcc version 4.9.0).  See also
+            # https://bugzilla.redhat.com/show_bug.cgi?id=556975
+            try:
+                curline = get_curline()
+            except:
+                # Using a bare except: when python 2.7 is built without
+                # '--with-pydebug' and with gcc 4.9.0, many types of exceptions
+                # occur: NullPyObjectPtr, gdb.MemoryError, AttributeError,
+                # TypeError...
+                pass
+            else:
+                if curline:
+                    print(curline)
 
         print("\nPdb has been setup for remote debugging%s.\n"
             "Enter now the 'detach' or 'quit' gdb command, and"

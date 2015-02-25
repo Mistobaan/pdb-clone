@@ -1,3 +1,18 @@
+# vi:set ts=8 sts=4 sw=4 et tw=80:
+
+# Python 2-3 compatibility.
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+try:
+    from test.support import strip_python_stderr    # Python 3
+except ImportError:
+    from test.test_support import strip_python_stderr   # Python 2
+try:
+    import StringIO
+except ImportError:
+    pass
+
 import sys
 import os
 import io
@@ -5,8 +20,7 @@ import signal
 import unittest
 import subprocess
 import errno
-from test.support import strip_python_stderr
-from pdb_clone import DFLT_ADDRESS
+from pdb_clone import PY3, DFLT_ADDRESS
 from pdb_clone import attach as pdb_attach
 
 class RemoteDebugging(unittest.TestCase):
@@ -28,9 +42,10 @@ class RemoteDebugging(unittest.TestCase):
         # registered and the main loop started.
         self.proc.stdout.readline()
         os.kill(self.proc.pid, self.signum)
+        cmds = '\n'.join(commands)
+        cmds = io.StringIO(cmds) if PY3 else StringIO.StringIO(cmds)
         try:
-            pdb_attach.attach(self.address, io.StringIO('\n'.join(commands)),
-                              attach_stdout, verbose=False)
+            pdb_attach.attach(self.address, cmds, attach_stdout, verbose=False)
         except (IOError, SystemExit) as err:
             if isinstance(err, IOError) and err.errno != errno.ECONNREFUSED:
                 raise
@@ -51,7 +66,7 @@ class RemoteDebugging(unittest.TestCase):
         self.proc = subprocess.Popen(cmd_line, stdout=subprocess.PIPE,
                                      stderr=subprocess.PIPE)
         try:
-            attach_stdout = io.StringIO()
+            attach_stdout = io.StringIO() if PY3 else StringIO.StringIO()
             self.attach(commands, attach_stdout)
             if next_commands:
                 self.attach(next_commands, attach_stdout)
@@ -133,8 +148,9 @@ class PdbHandlerTestCase(RemoteDebugging):
                 'detach',
             ]
         )
-        self.assertIn("Handler(host=b'127.0.0.1', port=7935, signum=%d)" %
-                      signal.SIGUSR1, stdout)
+        host = b'127.0.0.1' if PY3 else '127.0.0.1'
+        self.assertIn("Handler(host=%s, port=7935, signum=%d)" %
+                      (repr(host), signal.SIGUSR1), stdout)
 
     def test_unregister(self):
         # Check pdbhandler.unregister.
@@ -179,8 +195,9 @@ class PdbHandlerTestCase(RemoteDebugging):
                 'detach',
             ]
         )
-        self.assertIn("Handler(host=b'localhost', port=6825, signum=%d)" %
-            signal.SIGUSR2, stdout)
+        host = b'localhost' if PY3 else 'localhost'
+        self.assertIn("Handler(host=%s, port=6825, signum=%d)" %
+                      (repr(host), signal.SIGUSR2), stdout)
 
 if __name__ == '__main__':
     unittest.main()
