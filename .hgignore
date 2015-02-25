@@ -5,4 +5,4 @@ syntax: glob
 MANIFEST
 
 syntax: regexp
-^pdb_clone.egg-info\/.*$
+^lib/pdb_clone.egg-info\/.*$
