@@ -1,16 +1,26 @@
+# vi:set ts=8 sts=4 sw=4 et tw=80:
+
+# Python 2-3 compatibility.
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+try:
+    from test import support    # Python 3
+except ImportError:
+    from test import test_support as support    # Python 2
+
 import sys
 import signal
 import unittest
 import linecache
 import textwrap
 import importlib
-from test import support
 from itertools import islice, chain
 
-from pdb_clone import bdb
+from pdb_clone import PY33, raise_from, bdb
 
-# Python 3.3 or newer
-PY33 = (sys.version_info >= (3, 3))
+if __file__[-4:] in ('.pyc', '.pyo'):
+    __file__ = __file__[:-1]
 
 # Set 'debug' true to debug the test cases.
 debug = 0
@@ -131,7 +141,9 @@ class BdbTest(bdb.Bdb):
         elif (args and set_type in ('break', 'clear', 'ignore', 'enable',
                                     'disable')) or set_type in ('up', 'down'):
             if set_type in ('break', 'clear'):
-                fname, lineno, *remain = args
+                def unpack_args(x, y, *z):
+                    return x, y, z
+                fname, lineno, remain = unpack_args(*args)
                 lineno = self.lno_rel2abs(fname, lineno)
                 args = [fname, lineno]
                 args.extend(remain)
@@ -353,7 +365,7 @@ class SetMethodTestCase(unittest.TestCase):
             bdb_inst.runcall(func, *args, **kwds)
         except self.failureException as err:
             # Do not show the BdbTest traceback when the test fails.
-            raise self.failureException() from err
+            raise_from(self.failureException(err), err)
         self.assertFalse(bdb_inst.send_list,
                 'All send_expect sequences have not been processed.')
         return bdb_inst
@@ -366,7 +378,7 @@ class SetMethodTestCase(unittest.TestCase):
                                             TEST_MODULE, 'exec'))
         except self.failureException as err:
             # Do not show the BdbTest traceback when the test fails.
-            raise self.failureException() from err
+            raise_from(self.failureException(err), err)
         self.assertFalse(bdb_inst.send_list,
                 'All send_expect sequences have not been processed.')
 
@@ -380,7 +392,7 @@ class SetMethodTestCase(unittest.TestCase):
             bdb_inst.runeval(expr, globals, locals)
         except self.failureException as err:
             # Do not show the BdbTest traceback when the test fails.
-            raise self.failureException() from err
+            raise_from(self.failureException(err), err)
         self.assertFalse(bdb_inst.send_list,
                 'All send_expect sequences have not been processed.')
 
@@ -406,7 +418,7 @@ class SetMethodTestCase(unittest.TestCase):
             bdb_inst.runcall(dbg_module)
         except self.failureException as err:
             # Do not show the BdbTest traceback when the test fails.
-            raise self.failureException() from err
+            raise_from(self.failureException(err), err)
         self.assertFalse(bdb_inst.send_list,
                 'All send_expect sequences have not been processed.')
 
@@ -535,8 +547,9 @@ class RunCallTestCase(SetMethodTestCase):
             lno = 5
         """)
         self.send_expect = [
+            break_lineno(5, TEST_MODULE), (),
             break_func('foo', 'test_module_2.py'), (),
-            CONTINUE, ('line', 3, 'foo', ({1:1}, [])),
+            CONTINUE, ('line', 3, 'foo', ({2:1}, [])),
             NEXT, ('return', 3, 'foo'),
             NEXT, ('line', 4, '<module>'),
             QUIT, (),

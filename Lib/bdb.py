@@ -1,10 +1,19 @@
+# vi:set ts=8 sts=4 sw=4 et tw=80:
 """Debugger basics"""
+
+# Python 2-3 compatibility.
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+try:
+    import reprlib   # Python 3
+except ImportError:
+    import repr as reprlib   # Python 2
 
 import fnmatch
 import sys
 import os
 import linecache
-import reprlib
 import ast
 import itertools
 import types
@@ -13,8 +22,10 @@ import shutil
 from bisect import bisect
 from operator import attrgetter
 from inspect import CO_GENERATOR
+
+from . import PY3, PY34, eval_
 try:
-    from pdb_clone import _bdb
+    from . import _bdb
 except ImportError:
     _bdb = None
 
@@ -126,13 +137,24 @@ def code_line_numbers(code):
     yield valid_lno
     # The iterator yields (line_incr[i], byte_incr[i+1]) from lnotab.
     for line_incr, byte_incr in itertools.islice(zip(code.co_lnotab,
-                    itertools.chain(code.co_lnotab[1:], [1])), 1, None, 2):
-        lno += line_incr
-        if byte_incr == 0:
-            continue
+                itertools.chain(code.co_lnotab[1:], [b'\x01'])), 1, None, 2):
+        if PY3:
+            lno += line_incr
+            if byte_incr == 0:
+                continue
+        else:
+            lno += ord(line_incr)
+            if ord(byte_incr) == 0:
+                continue
         if lno != valid_lno:
             valid_lno = lno
             yield valid_lno
+
+def safe_repr(obj):
+    try:
+        return reprlib.repr(obj)
+    except Exception:
+        return object.__repr__(obj)
 
 class BdbException(Exception):
     """A bdb exception."""
@@ -215,9 +237,9 @@ class BdbModule:
             if not lines:
                 raise BdbSourceError('No lines in {}.'.format(self.filename))
             try:
-                self.code = compile(lines, self.filename, 'exec')
+                self.code = compile(lines, self.filename, 'exec', 0, True)
                 self.node = compile(lines, self.filename, 'exec',
-                                                    ast.PyCF_ONLY_AST)
+                                                    ast.PyCF_ONLY_AST, True)
             except (SyntaxError, TypeError) as err:
                 raise BdbSyntaxError('{}: {}.'.format(self.filename, err))
             # At this point we still need to test for self.filename in
@@ -474,13 +496,13 @@ class Tracer:
                 # frame where the {next, until, return} command had been
                 # previously issued, so we need to enable tracing in this
                 # function.
-                if (self.stopframe is frame and
+                if (PY34 and self.stopframe is frame and
                         frame.f_code.co_flags & CO_GENERATOR):
                     return self.trace_dispatch
                 # No need to trace this function.
                 return # None
             # Ignore call events in generator except when stepping.
-            if (frame.f_code.co_flags & CO_GENERATOR and
+            if (PY34 and frame.f_code.co_flags & CO_GENERATOR and
                     (self.stopframe is not None or self.stop_lineno != 0)):
                 return self.trace_dispatch
             if stop_here:
@@ -491,8 +513,11 @@ class Tracer:
         elif event == 'return':
             if self.stop_here(frame) or frame is self.stopframe:
                 # Ignore return events in generator except when stepping.
-                ignore = (frame.f_code.co_flags & CO_GENERATOR and
+                if PY34:
+                    ignore = (frame.f_code.co_flags & CO_GENERATOR and
                         (self.stopframe is not None or self.stop_lineno != 0))
+                else:
+                    ignore = False
                 if (not ignore and
                         not self.user_method(frame, self.user_return, arg)):
                     return None
@@ -512,7 +537,10 @@ class Tracer:
             return self.trace_dispatch
 
         elif event == 'exception':
-            if self.stop_here(frame):
+            if not PY34:
+                if self.stop_here(frame):
+                    return self.user_method(frame, self.user_exception, arg)
+            elif self.stop_here(frame):
                 # When stepping with next/until/return in a generator frame,
                 # skip the internal StopIteration exception (with no
                 # traceback) triggered by a subiterator run with the 'yield
@@ -915,13 +943,13 @@ class Bdb(BdbTracer):
         else:
             args = None
         if args:
-            s += reprlib.repr(args)
+            s += safe_repr(args)
         else:
             s += '()'
         if '__return__' in locals:
             rv = locals['__return__']
             s += '->'
-            s += reprlib.repr(rv)
+            s += safe_repr(rv)
         line = linecache.getline(filename, lineno, frame.f_globals)
         if line:
             s += lprefix + line.strip()
@@ -939,7 +967,7 @@ class Bdb(BdbTracer):
             locals = globals
         self.reset()
         if isinstance(cmd, str):
-            cmd = compile(cmd, "<string>", "exec")
+            cmd = compile(cmd, "<string>", "exec", 0, True)
         self.settrace(True)
         try:
             exec(cmd, globals, locals)
@@ -956,6 +984,8 @@ class Bdb(BdbTracer):
         if locals is None:
             locals = globals
         self.reset()
+        if isinstance(expr, str):
+            expr = compile(expr, '<string>', 'eval', 0, True)
         self.settrace(True)
         try:
             return eval(expr, globals, locals)
@@ -1037,7 +1067,7 @@ class Breakpoint:
         # A conditional breakpoint.
         if self.cond:
             try:
-                if not eval(self.cond, frame.f_globals, frame.f_locals):
+                if not eval_(self.cond, frame.f_globals, frame.f_locals):
                     return False, False
             except Exception:
                 # If the breakpoint condition evaluation fails, the most

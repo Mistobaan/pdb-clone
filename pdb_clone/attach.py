@@ -1,3 +1,4 @@
+# vi:set ts=8 sts=4 sw=4 et tw=80:
 """Attach to a remote Pdb instance.
 
 Command line history, command completion and completion on the help topic are
@@ -9,6 +10,15 @@ the right privilege to send a signal to the remote process.
 Use the 'detach' pdb command to release the remote process from pdb control
 and have it continue its execution without tracing overhead.
 """
+
+# Python 2-3 compatibility.
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+try:
+    import StringIO
+except ImportError:
+    pass
 
 import sys
 import os
@@ -26,7 +36,7 @@ from itertools import takewhile
 from collections import deque
 from subprocess import Popen, STDOUT, PIPE
 
-from . import pdb, DFLT_ADDRESS
+from . import PY3, DFLT_ADDRESS, pdb
 
 prompts = ('(Pdb) ', '(com) ', '((Pdb)) ', '>>> ', '... ')
 line_prmpts = tuple('\n%s' % p for p in prompts)
@@ -46,8 +56,11 @@ class AttachSocket(asynchat.async_chat, cmd.Cmd):
         self.pid = 0
         self._previous_sigint_handler = None
 
-    def message(self, *objs, sep=' ', end='\n', flush=False):
-        printflush(*objs, file=self.stdout, sep=sep, end=end, flush=flush)
+    def message(self, *objs, **kwds):
+        kwds['file'] = self.stdout
+        if 'flush' not in kwds:
+            kwds['flush'] = False
+        printflush(*objs, **kwds)
 
     def sigint_handler(self, signum, frame):
         if self.allow_kbdint:
@@ -75,7 +88,7 @@ class AttachSocket(asynchat.async_chat, cmd.Cmd):
         if self.connected:
             if self._previous_sigint_handler:
                 signal.signal(signal.SIGINT, self._previous_sigint_handler)
-            content = utf8_decode(self.data)
+            content = _decode(self.data, encoding='utf-8')
             if content:
                 self.message(content.rstrip('\n'))
             self.message('Closed by remote.')
@@ -87,7 +100,7 @@ class AttachSocket(asynchat.async_chat, cmd.Cmd):
             idx = self.data.find(b'\n')
             if idx != -1:
                 if idx > 0:
-                    self.get_header(utf8_decode(self.data[:idx]))
+                    self.get_header(_decode(self.data[:idx], encoding='utf-8'))
                 self.data = self.data[idx + 1:]
                 continue
             return
@@ -137,7 +150,7 @@ class AttachSocket(asynchat.async_chat, cmd.Cmd):
             self.message('Invalid header line: %s' % line)
 
     def interaction(self):
-        content = utf8_decode(self.data)
+        content = _decode(self.data, encoding='utf-8')
         plen = 0
         if content.endswith(line_prmpts) or content in prompts:
             for i in range(len(prompts)):
@@ -170,7 +183,7 @@ class AttachSocket(asynchat.async_chat, cmd.Cmd):
         if cmd == 'interact':
             self.lastcmd = ''
         # Explicitly set the encoding to utf-8.
-        self.push(self.curline.encode(encoding='utf-8'))
+        self.push(_encode(self.curline, encoding='utf-8'))
         return True
 
     # Add the Pdb 'do_' and 'help_' methods as commands controlled by the
@@ -191,10 +204,10 @@ class AttachSocketWithDetach(AttachSocket):
     """
 
     def interaction(self):
-        content = utf8_decode(self.data)
+        content = _decode(self.data, encoding='utf-8')
         if content.endswith(line_prmpts) or content in prompts:
             self.data = b''
-            self.push('detach\n'.encode(encoding='utf-8'))
+            self.push(_encode('detach\n', encoding='utf-8'))
 
 class Result:
     def __init__(self):
@@ -265,7 +278,7 @@ class GdbSocket(asynchat.async_chat):
 
     def __init__(self, ctx, address, proc, proc_iut, sock,
                  verbose, connections):
-        super().__init__(sock, connections)
+        asynchat.async_chat.__init__(self, sock, connections)
         self.ctx = ctx
         self.address = address
         self.proc = proc
@@ -276,7 +289,7 @@ class GdbSocket(asynchat.async_chat):
         self.state = self.ST_INIT
         self.gdb_version = None
         self.set_terminator(b'\n')
-        self.ibuff = io.StringIO()
+        self.ibuff = io.StringIO() if PY3 else StringIO.StringIO()
 
         # Setup gdb to not stop the inferior on the following signals.
         self.cli_command('handle SIGPIPE noprint')
@@ -314,7 +327,7 @@ class GdbSocket(asynchat.async_chat):
             line += '\n'
         if self.verbose:
             printflush('+++', line, end='')
-        self.push(line.encode())
+        self.push(_encode(line))
 
     def cli_command(self, cmd):
         self.mi_command('-interpreter-exec console "%s"' % cmd)
@@ -329,7 +342,7 @@ class GdbSocket(asynchat.async_chat):
 
     def attach(self):
         if self.ctx:
-            dev_null = io.StringIO()
+            dev_null = io.StringIO() if PY3 else StringIO.StringIO()
             asock = AttachSocketWithDetach(self.connections, stdout=dev_null)
         else:
             asock = AttachSocket(self.connections)
@@ -337,11 +350,11 @@ class GdbSocket(asynchat.async_chat):
         connect_process(asock, self.ctx, self.proc_iut, address=self.address)
 
     def collect_incoming_data(self, data):
-        self.ibuff.write(data.decode())
+        self.ibuff.write(_decode(data))
 
     def found_terminator(self):
         line = self.ibuff.getvalue()
-        self.ibuff = io.StringIO()
+        self.ibuff = io.StringIO() if PY3 else StringIO.StringIO()
         if self.verbose:
             printflush(line)
         elif line.startswith('~"->'):
@@ -421,13 +434,34 @@ class GdbSocket(asynchat.async_chat):
                 self.ctx.stmt.print()
             return True
 
-def printflush(*args, file=sys.stdout, flush=True, **kwds):
-    print(*args, file=file, **kwds)
+def printflush(*args, **kwds):
+    if 'flush' in kwds:
+        flush = kwds['flush']
+        del kwds['flush']
+    else:
+        flush = True
+    print(*args, **kwds)
     if flush:
+        file = kwds.get('file', sys.stdout)
         file.flush()
 
-def utf8_decode(data):
-    return data.decode(encoding='utf-8')
+def _decode(data, encoding=None):
+    if PY3:
+        if encoding:
+            return data.decode(encoding=encoding)
+        else:
+            return data.decode()
+    else:
+        return data
+
+def _encode(data, encoding=None):
+    if PY3:
+        if encoding:
+            return data.encode(encoding=encoding)
+        else:
+            return data.encode()
+    else:
+        return data
 
 def parse_gdb_version(line):
     r"""Parse the gdb version from the gdb header.
@@ -514,7 +548,7 @@ def attach_loop(argv):
         if use_xoption:
             os.kill(proc.pid, signal.SIGUSR2)
             connections = {}
-            dev_null = io.StringIO()
+            dev_null = io.StringIO() if PY3 else StringIO.StringIO()
             asock = AttachSocketWithDetach(connections, stdout=dev_null)
             asock.create_socket(socket.AF_INET, socket.SOCK_STREAM)
             connect_process(asock, ctx, proc)

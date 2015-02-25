@@ -1,5 +1,21 @@
-# A test suite for pdb; not very comprehensive at the moment.
+# vi:set ts=8 sts=4 sw=4 et tw=80:
 
+# Python 2-3 compatibility.
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+try:
+    from test import support    # Python 3
+    from test.support import strip_python_stderr
+except ImportError:
+    from test import test_support as support    # Python 2
+    from test.test_support import strip_python_stderr
+try:
+    import StringIO
+except ImportError:
+    pass
+
+# A test suite for pdb; not very comprehensive at the moment.
 import sys
 import io
 import time
@@ -9,20 +25,16 @@ import subprocess
 import textwrap
 import importlib
 import errno
-from test.support import strip_python_stderr
-from pdb_clone import pdb, DFLT_ADDRESS
-from pdb_clone import attach as pdb_attach
 try:
     import threading
 except ImportError:
     threading = None
 
-from test import support
 # This little helper class is essential for testing pdb under doctest.
 from test.test_doctest import _FakeInput
 
-# Python 3.3 or newer
-PY33 = (sys.version_info >= (3, 3))
+from pdb_clone import PY3, PY33, DFLT_ADDRESS, pdb
+from pdb_clone import attach as pdb_attach
 
 class PdbTestInput(object):
     """Context manager that makes testing Pdb in doctests easier."""
@@ -181,6 +193,7 @@ def test_pdb_basic_commands():
 def test_pdb_breakpoint_commands():
     """Test basic commands related to breakpoints.
 
+    >>> from __future__ import print_function
     >>> def test_function():
     ...     from pdb_clone import pdb; pdb.Pdb(nosigint=True).set_trace()
     ...     print(1)
@@ -215,7 +228,7 @@ def test_pdb_breakpoint_commands():
     ...     'clear 1',
     ...     'commands 2',
     ...     'p "42"',
-    ...     'print("42", 7*6)',     # Issue 18764 (not about breakpoints)
+    ...     'print(("42", 7*6))',     # Issue 18764 (not about breakpoints)
     ...     'end',
     ...     'continue',  # will stop at breakpoint 2 (line 4)
     ...     'clear',     # clear all!
@@ -226,60 +239,60 @@ def test_pdb_breakpoint_commands():
     ...     'continue',
     ... ]):
     ...    test_function()
-    > <doctest test.test_pdb.test_pdb_breakpoint_commands[0]>(3)test_function()
+    > <doctest test.test_pdb.test_pdb_breakpoint_commands[1]>(3)test_function()
     -> print(1)
     (Pdb) break 3
-    Breakpoint 1 at <doctest test.test_pdb.test_pdb_breakpoint_commands[0]>:3
+    Breakpoint 1 at <doctest test.test_pdb.test_pdb_breakpoint_commands[1]>:3
     (Pdb) disable 1
-    Disabled breakpoint 1 at <doctest test.test_pdb.test_pdb_breakpoint_commands[0]>:3
+    Disabled breakpoint 1 at <doctest test.test_pdb.test_pdb_breakpoint_commands[1]>:3
     (Pdb) ignore 1 10
     Will ignore next 10 crossings of breakpoint 1.
     (Pdb) condition 1 1 < 2
     New condition set for breakpoint 1.
     (Pdb) break 4
-    Breakpoint 2 at <doctest test.test_pdb.test_pdb_breakpoint_commands[0]>:4
+    Breakpoint 2 at <doctest test.test_pdb.test_pdb_breakpoint_commands[1]>:4
     (Pdb) break 4
-    Breakpoint 3 at <doctest test.test_pdb.test_pdb_breakpoint_commands[0]>:4
+    Breakpoint 3 at <doctest test.test_pdb.test_pdb_breakpoint_commands[1]>:4
     (Pdb) break
     Num Type         Disp Enb   Where
-    1   breakpoint   keep no    at <doctest test.test_pdb.test_pdb_breakpoint_commands[0]>:3
+    1   breakpoint   keep no    at <doctest test.test_pdb.test_pdb_breakpoint_commands[1]>:3
             stop only if 1 < 2
             ignore next 10 hits
-    2   breakpoint   keep yes   at <doctest test.test_pdb.test_pdb_breakpoint_commands[0]>:4
-    3   breakpoint   keep yes   at <doctest test.test_pdb.test_pdb_breakpoint_commands[0]>:4
+    2   breakpoint   keep yes   at <doctest test.test_pdb.test_pdb_breakpoint_commands[1]>:4
+    3   breakpoint   keep yes   at <doctest test.test_pdb.test_pdb_breakpoint_commands[1]>:4
     (Pdb) clear 3
-    Deleted breakpoint 3 at <doctest test.test_pdb.test_pdb_breakpoint_commands[0]>:4
+    Deleted breakpoint 3 at <doctest test.test_pdb.test_pdb_breakpoint_commands[1]>:4
     (Pdb) break
     Num Type         Disp Enb   Where
-    1   breakpoint   keep no    at <doctest test.test_pdb.test_pdb_breakpoint_commands[0]>:3
+    1   breakpoint   keep no    at <doctest test.test_pdb.test_pdb_breakpoint_commands[1]>:3
             stop only if 1 < 2
             ignore next 10 hits
-    2   breakpoint   keep yes   at <doctest test.test_pdb.test_pdb_breakpoint_commands[0]>:4
+    2   breakpoint   keep yes   at <doctest test.test_pdb.test_pdb_breakpoint_commands[1]>:4
     (Pdb) condition 1
     Breakpoint 1 is now unconditional.
     (Pdb) enable 1
-    Enabled breakpoint 1 at <doctest test.test_pdb.test_pdb_breakpoint_commands[0]>:3
+    Enabled breakpoint 1 at <doctest test.test_pdb.test_pdb_breakpoint_commands[1]>:3
     (Pdb) clear 1
-    Deleted breakpoint 1 at <doctest test.test_pdb.test_pdb_breakpoint_commands[0]>:3
+    Deleted breakpoint 1 at <doctest test.test_pdb.test_pdb_breakpoint_commands[1]>:3
     (Pdb) commands 2
     (com) p "42"
-    (com) print("42", 7*6)
+    (com) print(("42", 7*6))
     (com) end
     (Pdb) continue
     1
     '42'
-    42 42
-    > <doctest test.test_pdb.test_pdb_breakpoint_commands[0]>(4)test_function()
+    ('42', 42)
+    > <doctest test.test_pdb.test_pdb_breakpoint_commands[1]>(4)test_function()
     -> print(2)
     (Pdb) clear
     Clear all breaks? y
-    Deleted breakpoint 2 at <doctest test.test_pdb.test_pdb_breakpoint_commands[0]>:4
+    Deleted breakpoint 2 at <doctest test.test_pdb.test_pdb_breakpoint_commands[1]>:4
     (Pdb) tbreak 5
-    Breakpoint 4 at <doctest test.test_pdb.test_pdb_breakpoint_commands[0]>:5
+    Breakpoint 4 at <doctest test.test_pdb.test_pdb_breakpoint_commands[1]>:5
     (Pdb) continue
     2
-    Deleted breakpoint 4 at <doctest test.test_pdb.test_pdb_breakpoint_commands[0]>:5
-    > <doctest test.test_pdb.test_pdb_breakpoint_commands[0]>(5)test_function()
+    Deleted breakpoint 4 at <doctest test.test_pdb.test_pdb_breakpoint_commands[1]>:5
+    > <doctest test.test_pdb.test_pdb_breakpoint_commands[1]>(5)test_function()
     -> print(3)
     (Pdb) break
     (Pdb) continue
@@ -421,7 +434,7 @@ def test_post_mortem():
     (Pdb) next
     Exception!
     --Exception--
-    ZeroDivisionError: division by zero
+    ZeroDivisionError: ... by zero
     > <doctest test.test_pdb.test_post_mortem[1]>(3)test_function()
     -> test_function_2()
     (Pdb) bt
@@ -577,16 +590,16 @@ def test_pdb_run_with_incorrect_argument():
     """Testing run and runeval with incorrect first argument.
 
     >>> pti = PdbTestInput(['continue',])
-    >>> with pti:
+    >>> with pti:   # doctest: +ELLIPSIS
     ...     pdb_invoke('run', lambda x: x)
     Traceback (most recent call last):
-    TypeError: exec() arg 1 must be a string, bytes or code object
+    TypeError: exec... or code object
 
     >>> pti = PdbTestInput(['continue',])
-    >>> with pti:
+    >>> with pti:   # doctest: +ELLIPSIS
     ...     pdb_invoke('runeval', lambda x: x)
     Traceback (most recent call last):
-    TypeError: eval() arg 1 must be a string, bytes or code object
+    TypeError: eval() arg 1 must be a string... or code object
     """
 
 
@@ -789,49 +802,50 @@ if PY33:
         finished
         """
 
-def test_pdb_until_command_for_generator():
-    """Testing no unwindng stack on yield for generators
-       for "until" command if target breakpoing is not reached
+if PY3:
+    def test_pdb_until_command_for_generator():
+        """Testing no unwindng stack on yield for generators
+           for "until" command if target breakpoing is not reached
 
-    >>> def test_gen():
-    ...     yield 0
-    ...     yield 1
-    ...     yield 2
+        >>> def test_gen():
+        ...     yield 0
+        ...     yield 1
+        ...     yield 2
 
-    >>> def test_function():
-    ...     from pdb_clone import pdb; pdb.Pdb(nosigint=True).set_trace()
-    ...     for i in test_gen():
-    ...         print(i)
-    ...     print("finished")
+        >>> def test_function():
+        ...     from pdb_clone import pdb; pdb.Pdb(nosigint=True).set_trace()
+        ...     for i in test_gen():
+        ...         print(i)
+        ...     print("finished")
 
-    >>> with PdbTestInput(['step',
-    ...                    'until 4',
-    ...                    'step',
-    ...                    'step',
-    ...                    'continue']):
-    ...     test_function()
-    > <doctest test.test_pdb.test_pdb_until_command_for_generator[1]>(3)test_function()
-    -> for i in test_gen():
-    (Pdb) step
-    --Call--
-    > <doctest test.test_pdb.test_pdb_until_command_for_generator[0]>(1)test_gen()
-    -> def test_gen():
-    (Pdb) until 4
-    0
-    1
-    > <doctest test.test_pdb.test_pdb_until_command_for_generator[0]>(4)test_gen()
-    -> yield 2
-    (Pdb) step
-    --Return--
-    > <doctest test.test_pdb.test_pdb_until_command_for_generator[0]>(4)test_gen()->2
-    -> yield 2
-    (Pdb) step
-    > <doctest test.test_pdb.test_pdb_until_command_for_generator[1]>(4)test_function()
-    -> print(i)
-    (Pdb) continue
-    2
-    finished
-    """
+        >>> with PdbTestInput(['step',
+        ...                    'until 4',
+        ...                    'step',
+        ...                    'step',
+        ...                    'continue']):
+        ...     test_function()
+        > <doctest test.test_pdb.test_pdb_until_command_for_generator[1]>(3)test_function()
+        -> for i in test_gen():
+        (Pdb) step
+        --Call--
+        > <doctest test.test_pdb.test_pdb_until_command_for_generator[0]>(1)test_gen()
+        -> def test_gen():
+        (Pdb) until 4
+        0
+        1
+        > <doctest test.test_pdb.test_pdb_until_command_for_generator[0]>(4)test_gen()
+        -> yield 2
+        (Pdb) step
+        --Return--
+        > <doctest test.test_pdb.test_pdb_until_command_for_generator[0]>(4)test_gen()->2
+        -> yield 2
+        (Pdb) step
+        > <doctest test.test_pdb.test_pdb_until_command_for_generator[1]>(4)test_function()
+        -> print(i)
+        (Pdb) continue
+        2
+        finished
+        """
 
 if PY33:
     def test_pdb_next_command_in_generator_for_loop():
@@ -931,20 +945,20 @@ def test_thread_command():
     >>> class State():
     ...     def __init__(self): self.running = True
     ...     def stop(self): self.running = False
-    ...     def __bool__(self): return self.running
 
     >>> def deadlock(lock1, lock2, state):
     ...     cnt = 0
-    ...     while state:
+    ...     while state.running:
     ...         with lock1:
-    ...             while state:
-    ...                 if lock2.acquire(timeout=.020):
+    ...             while state.running:
+    ...                 if lock2.acquire(False):
     ...                     deadlocked = False
     ...                     cnt += 1
     ...                     lock2.release()
     ...                     break
     ...                 else:
     ...                     deadlocked = True
+    ...                     time.sleep(.020)
 
     >>> def test_function():
     ...     locks = (threading.Lock(), threading.Lock())
@@ -979,21 +993,21 @@ def test_thread_command():
        Nb  Name               Identifier       Stack entry
     +*   1 MainThread          ... <doctest test.test_pdb.test_thread_command[2]>(12)test_function()
                                                -> t1.join(); t2.join()
-         2 Thread_1            ... <doctest test.test_pdb.test_thread_command[1]>(6)deadlock()
-                                               -> if lock2.acquire(timeout=.020):
-         3 Thread_2            ... <doctest test.test_pdb.test_thread_command[1]>(6)deadlock()
-                                               -> if lock2.acquire(timeout=.020):
+         2 Thread_1            ... <doctest test.test_pdb.test_thread_command[1]>(13)deadlock()
+                                               -> time.sleep(.020)
+         3 Thread_2            ... <doctest test.test_pdb.test_thread_command[1]>(13)deadlock()
+                                               -> time.sleep(.020)
     (Pdb) thread 2
-    > <doctest test.test_pdb.test_thread_command[1]>(6)deadlock()
-    -> if lock2.acquire(timeout=.020):
+    > <doctest test.test_pdb.test_thread_command[1]>(13)deadlock()
+    -> time.sleep(.020)
     (Pdb) thread
        Nb  Name               Identifier       Stack entry
     +    1 MainThread          ... <doctest test.test_pdb.test_thread_command[2]>(12)test_function()
                                                -> t1.join(); t2.join()
-     *   2 Thread_1            ... <doctest test.test_pdb.test_thread_command[1]>(6)deadlock()
-                                               -> if lock2.acquire(timeout=.020):
-         3 Thread_2            ... <doctest test.test_pdb.test_thread_command[1]>(6)deadlock()
-                                               -> if lock2.acquire(timeout=.020):
+     *   2 Thread_1            ... <doctest test.test_pdb.test_thread_command[1]>(13)deadlock()
+                                               -> time.sleep(.020)
+         3 Thread_2            ... <doctest test.test_pdb.test_thread_command[1]>(13)deadlock()
+                                               -> time.sleep(.020)
     (Pdb) state.stop()
     (Pdb) time.sleep(.100)
     (Pdb) thread 1
@@ -1099,11 +1113,11 @@ def test_pdb_issue_20766():
     > <doctest test.test_pdb.test_pdb_issue_20766[1]>(4)foo()
     -> gc.collect()
     (Pdb) continue
-    [<module '...signal' (built-in)>, '...signal']
+    [...signal']
     > <doctest test.test_pdb.test_pdb_issue_20766[1]>(4)foo()
     -> gc.collect()
     (Pdb) continue
-    [<module '...signal' (built-in)>, '...signal']
+    [...signal']
     self._previous_sigint_handler does not refer to the previous Pdb instance.
     """
 
@@ -1164,11 +1178,10 @@ class PdbTestCase(unittest.TestCase):
             f.write(textwrap.dedent(script))
         self.addCleanup(support.unlink, filename)
         cmd = [sys.executable, 'pdb-clone', filename]
-        with subprocess.Popen(cmd, stdout=subprocess.PIPE,
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                                    stdin=subprocess.PIPE,
-                                   stderr=subprocess.PIPE,
-                                   ) as proc:
-            stdout, stderr = proc.communicate(str.encode(commands))
+                                   stderr=subprocess.PIPE)
+        stdout, stderr = proc.communicate(str.encode(commands))
         stdout = stdout and bytes.decode(stdout)
         stderr = stderr and bytes.decode(stderr)
         return stdout, stderr
@@ -1300,6 +1313,7 @@ class PdbTestCase(unittest.TestCase):
         stdout, stderr = self.run_pdb(script, commands, filename)
         stdout = normalize(stdout, filename)
         expected = normalize(expected)
+        expected = expected.strip()
         self.assertTrue(expected in stdout,
             '\n\nExpected:\n{}\nGot:\n{}\n'
             'Fail to handle two breakpoints set on the same line.'.format(
@@ -1388,6 +1402,44 @@ class PdbTestCase(unittest.TestCase):
             'Fail to handle a syntax error in the debuggee.'
             .format(expected, stderr))
 
+    @unittest.skipIf(PY3, 'a Python 2 test')
+    def test_issue_13044(self):
+        script = """
+            from pdb_clone import pdb
+
+            pdb.set_trace()
+            a = 1
+            b = 2
+            sum = a + b
+        """
+        commands = """
+            step
+            step
+            step
+            step
+        """
+        # The error is not always the same:
+        # Python 2.7.2: Exception ImportError: 'No module named repr' in
+        # <function _remove at 0x7f7f51224938> ignored
+        # Python 2.7.1: Exception AttributeError: "'NoneType' object has no
+        # attribute 'path'" in <function _remove at 0xb73b6df4> ignored
+        error = 'Exception'
+        filename = 'main.py'
+        with open(filename, 'w') as f:
+            f.write(textwrap.dedent(script))
+        self.addCleanup(support.unlink, filename)
+        cmd = [sys.executable, filename]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                   stdin=subprocess.PIPE,
+                                   stderr=subprocess.PIPE)
+        stdout, stderr = proc.communicate(str.encode(commands))
+        stderr = stderr and normalize(bytes.decode(stderr))
+        error = normalize(error)
+        self.assertTrue(error not in stderr,
+            '\n\nError not expected:\n{}\nGot:\n{}\n'
+            'The debugger is still active while the interpreter shuts down.'
+            .format(error, stderr))
+
     def test_issue13120(self):
         # invoking "continue" on a non-main thread triggered an exception
         # inside signal.signal
@@ -1449,7 +1501,7 @@ class PdbTestCase(unittest.TestCase):
     def test_issue_20853_1(self):
         # pdb "args" crashes when an arg is not printable.
         script = """
-            class foo:
+            class foo(object):
                 def __init__(self):
                     foo.bar = "hello"
                 def __repr__(self):
@@ -1475,8 +1527,9 @@ class PdbTestCase(unittest.TestCase):
         filename = 'main.py'
         stdout, stderr = self.run_pdb(script, commands, filename)
         stdout = normalize(stdout, filename)
+        match = '<foo instance at' if PY3 else '<__main__.foo object at'
         self.assertTrue(
-            len(list(filter(lambda x: '__main__.foo object' in x,
+            len(list(filter(lambda x: match in x,
                                             stdout.split('\n')))) == 4,
             '\n\nGot:\n{}\n'
             'Fail to print a safe representation of self.'
@@ -1511,7 +1564,7 @@ class PdbTestCase(unittest.TestCase):
             retval
             quit
         """
-        expected = '<__main__.C object at'
+        expected = '<C instance at' if PY3 else '<__main__.C object at'
         filename = 'main.py'
         stdout, stderr = self.run_pdb(script, commands, filename)
         stdout = normalize(stdout, filename)
@@ -1567,9 +1620,10 @@ class RemoteDebugging(unittest.TestCase):
                     (self.proc.returncode, stderr.decode('ascii', 'ignore')))
 
     def attach(self, commands, attach_stdout):
+        cmds = '\n'.join(commands)
+        cmds = io.StringIO(cmds) if PY3 else StringIO.StringIO(cmds)
         try:
-            pdb_attach.attach(self.address, io.StringIO('\n'.join(commands)),
-                              attach_stdout, verbose=False)
+            pdb_attach.attach(self.address, cmds, attach_stdout, verbose=False)
         except (IOError, SystemExit) as err:
             if isinstance(err, IOError) and err.errno != errno.ECONNREFUSED:
                 raise
@@ -1584,7 +1638,7 @@ class RemoteDebugging(unittest.TestCase):
         self.proc = subprocess.Popen(cmd_line, stdout=subprocess.PIPE,
                                      stderr=subprocess.PIPE)
         try:
-            attach_stdout = io.StringIO()
+            attach_stdout = io.StringIO() if PY3 else StringIO.StringIO()
             self.attach(commands, attach_stdout)
             stdout, stderr = self.proc.communicate()
         finally:
@@ -1690,7 +1744,7 @@ class PdbTestCaseUsingRemoteDebugging(RemoteDebugging):
             foo()
             """,
             [
-                "print('The result is', all(x < limit for x in items))",
+                "!print('The result is %s' % all(x < limit for x in items))",
                 'detach',
              ]
         )

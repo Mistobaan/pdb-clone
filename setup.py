@@ -1,19 +1,46 @@
-#!/usr/bin/env python3
+# vi:set ts=8 sts=4 sw=4 et tw=80:
+#!/usr/bin/env python
 "A clone of pdb, fast and with the remote debugging and attach features."
+
+# Python 2-3 compatibility.
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+try:
+    from test import support    # Python 3
+except ImportError:
+    from test import test_support as support    # Python 2
 
 import sys
 import os
 import doctest
 import importlib
 import shutil
-import test.support as support
 from unittest import defaultTestLoader
+
+from pdb_clone import __version__, PY3
+
 try:
     from setuptools import setup, Extension, Command
+    if not PY3:
+        from setuptools.command.build_ext import build_ext as _build_ext
 except ImportError:
     from distutils.core import setup, Extension, Command
+    if not PY3:
+        from distutils.command.build_ext import build_ext as _build_ext
 
-from pdb_clone import __version__
+if not PY3:
+    class build_ext(_build_ext):
+        """Subclass 'build_ext' to build extensions as 'optional'.
+
+        'optional' is not available in Python 2.
+        """
+
+        def run(self):
+            try:
+                _build_ext.run(self)
+            except (CCompilerError, DistutilsError, CompileError):
+                self.warn('\n\n*** Building the extension failed. ***')
 
 class Test(Command):
     description = 'run the test suite'
@@ -99,13 +126,23 @@ class Test(Command):
 with open('README.rst') as f:
     long_description = f.read()
 
+if PY3:
+    cmdclass = {'test': Test}
+    ext_modules = [Extension('pdb_clone._bdb',
+                    sources=['pdb_clone/_bdbmodule-py3.c'], optional=True),
+                   Extension('pdb_clone._pdbhandler',
+                    sources=['pdb_clone/_pdbhandler-py3.c'], optional=True)]
+else:
+    cmdclass={'build_ext': build_ext, 'test': Test}
+    ext_modules = [Extension('pdb_clone._bdb',
+                    sources=['pdb_clone/_bdbmodule-py27.c']),
+                   Extension('pdb_clone._pdbhandler',
+                    sources=['pdb_clone/_pdbhandler-py27.c'])]
+
 setup(
-    cmdclass = {'test': Test},
+    cmdclass = cmdclass,
     scripts = ['pdb-clone', 'pdb-attach'],
-    ext_modules  =  [Extension('pdb_clone._bdb',
-                        sources=['pdb_clone/_bdbmodule.c'], optional=True),
-                     Extension('pdb_clone._pdbhandler',
-                        sources=['pdb_clone/_pdbhandler.c'], optional=True)],
+    ext_modules = ext_modules,
     packages = ['pdb_clone'],
 
     # meta-data

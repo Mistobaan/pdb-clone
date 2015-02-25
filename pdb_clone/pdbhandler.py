@@ -1,4 +1,10 @@
+# vi:set ts=8 sts=4 sw=4 et tw=80:
 """The pdbhandler module."""
+
+# Python 2-3 compatibility.
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
 
 import sys
 if sys.platform.startswith('win'):
