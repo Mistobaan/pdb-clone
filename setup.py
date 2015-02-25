@@ -18,7 +18,7 @@ import importlib
 import shutil
 from unittest import defaultTestLoader
 
-from pdb_clone import __version__, PY3
+from lib.pdb_clone import __version__, PY3
 
 try:
     from setuptools import setup, Extension, Command
@@ -129,21 +129,22 @@ with open('README.rst') as f:
 if PY3:
     cmdclass = {'test': Test}
     ext_modules = [Extension('pdb_clone._bdb',
-                    sources=['pdb_clone/_bdbmodule-py3.c'], optional=True),
+                    sources=['lib/pdb_clone/_bdbmodule-py3.c'], optional=True),
                    Extension('pdb_clone._pdbhandler',
-                    sources=['pdb_clone/_pdbhandler-py3.c'], optional=True)]
+                    sources=['lib/pdb_clone/_pdbhandler-py3.c'], optional=True)]
 else:
     cmdclass={'build_ext': build_ext, 'test': Test}
     ext_modules = [Extension('pdb_clone._bdb',
-                    sources=['pdb_clone/_bdbmodule-py27.c']),
+                    sources=['lib/pdb_clone/_bdbmodule-py27.c']),
                    Extension('pdb_clone._pdbhandler',
-                    sources=['pdb_clone/_pdbhandler-py27.c'])]
+                    sources=['lib/pdb_clone/_pdbhandler-py27.c'])]
 
 setup(
     cmdclass = cmdclass,
     scripts = ['pdb-clone', 'pdb-attach'],
     ext_modules = ext_modules,
     packages = ['pdb_clone'],
+    package_dir = {'': 'lib'},
 
     # meta-data
     name = 'pdb-clone',
